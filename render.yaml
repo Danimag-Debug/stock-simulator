@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: stock-simulator
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn stock_simulator.app_auth:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SECRET_KEY
+        generateValue: true

@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模拟炒股助手 · 中线策略</title>
+<style>
+  :root {
+    --red: #e63946;
+    --green: #2a9d8f;
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #f79239;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "PingFang SC", sans-serif; font-size: 14px; }
+
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  .header-right { display: flex; gap: 12px; align-items: center; }
+  .badge { background: #21262d; border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 12px; color: var(--muted); }
+  .badge.active { border-color: var(--green); color: var(--green); }
+  
+  .user-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .user-avatar {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, var(--accent), #e63946);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  
+  .user-name {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  
+  .logout-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  .logout-btn:hover {
+    border-color: var(--red);
+    color: var(--red);
+  }
+
+  .main { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .summary-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .summary-card .label { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .summary-card .value { font-size: 28px; font-weight: 700; }
+  .summary-card .value.positive { color: var(--red); }
+  .summary-card .value.negative { color: var(--green); }
+
+  .section { margin-bottom: 32px; }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .section-header h2 { font-size: 18px; font-weight: 600; }
+  .section-header .actions { display: flex; gap: 8px; }
+  .btn { background: var(--accent); color: white; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+  .btn:hover { background: #e68535; }
+  .btn-secondary { background: var(--border); }
+  .btn-secondary:hover { background: #444950; }
+  .btn-small { padding: 4px 12px; font-size: 12px; }
+
+  .stocks-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stock-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: border-color 0.2s;
+  }
+  .stock-card:hover { border-color: var(--accent); }
+  .stock-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+  .stock-name { font-size: 16px; font-weight: 600; }
+  .stock-code { color: var(--muted); font-size: 12px; }
+  .stock-price { font-size: 22px; font-weight: 700; }
+  .stock-change { font-size: 14px; font-weight: 500; }
+  .stock-change.positive { color: var(--red); }
+  .stock-change.negative { color: var(--green); }
+  .stock-meta { display: flex; gap: 16px; margin: 12px 0; font-size: 12px; color: var(--muted); }
+  .stock-meta span { display: flex; align-items: center; gap: 4px; }
+  .stock-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .tag { background: rgba(247, 146, 57, 0.1); color: var(--accent); padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .stock-actions { display: flex; gap: 8px; }
+  .stock-actions button { flex: 1; }
+
+  .holdings-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .holdings-table th, .holdings-table td {
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .holdings-table th {
+    background: rgba(48, 54, 61, 0.3);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .holdings-table tr:last-child td { border-bottom: none; }
+  .holdings-table tr:hover { background: rgba(48, 54, 61, 0.1); }
+
+  .logs-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .logs-table th, .logs-table td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .logs-table th {
+    background: rgba(48, 54, 61, 0.3);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .logs-table tr:last-child td { border-bottom: none; }
+
+  .toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    min-width: 280px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    z-index: 10000;
+    transform: translateY(-20px);
+    opacity: 0;
+    transition: transform 0.3s, opacity 0.3s;
+  }
+  .toast.show {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  .toast.success { border-left: 4px solid var(--green); }
+  .toast.error { border-left: 4px solid var(--red); }
+  .toast-content { display: flex; justify-content: space-between; align-items: center; }
+  .toast-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; }
+
+  #modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 32px;
+    min-width: 300px;
+    max-width: 420px;
+  }
+  .modal-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .modal-body {
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.7;
+    white-space: pre-line;
+    margin-bottom: 24px;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+  }
+  .modal-actions button {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  #modal-cancel {
+    background: var(--border);
+    color: var(--text);
+  }
+  #modal-confirm {
+    background: var(--red);
+    color: white;
+  }
+
+  .no-auth-message {
+    display: none;
+    text-align: center;
+    padding: 60px 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-top: 40px;
+  }
+  
+  .no-auth-message h3 {
+    font-size: 20px;
+    margin-bottom: 12px;
+  }
+  
+  .no-auth-message p {
+    color: var(--muted);
+    margin-bottom: 24px;
+  }
+  
+  .auth-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+
+  /* 响应式 */
+  @media (max-width: 1200px) {
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    .stocks-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  }
+  @media (max-width: 768px) {
+    .summary-grid { grid-template-columns: 1fr; }
+    .stocks-grid { grid-template-columns: 1fr; }
+    .section-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+    .section-header .actions { width: 100%; }
+    .holdings-table, .logs-table { display: block; overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>模拟炒股<span>助手</span></h1>
+    <div class="header-right">
+      <div class="badge" id="scan-status">未连接</div>
+      <div class="user-info" id="user-info" style="display: none;">
+        <div class="user-avatar" id="user-avatar">U</div>
+        <div class="user-name" id="user-name">用户名</div>
+        <button class="logout-btn" onclick="logout()">退出</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- 未登录时的提示 -->
+    <div class="no-auth-message" id="no-auth-message">
+      <h3>请先登录</h3>
+      <p>登录后即可查看股票推荐、管理持仓和进行模拟交易</p>
+      <div class="auth-buttons">
+        <button class="btn" onclick="window.location.href='/login.html'">立即登录</button>
+        <button class="btn btn-secondary" onclick="window.location.href='/login.html'">注册账号</button>
+      </div>
+    </div>
+
+    <!-- 已登录后的内容 -->
+    <div id="app-content" style="display: none;">
+      <!-- 账户概览 -->
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="label">账户总资产</div>
+          <div class="value" id="total-assets">¥ 0.00</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">可用现金</div>
+          <div class="value" id="cash">¥ 0.00</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">总盈亏</div>
+          <div class="value" id="total-profit">¥ 0.00</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">收益率</div>
+          <div class="value" id="profit-pct">0.00%</div>
+        </div>
+      </div>
+
+      <!-- 推荐股票 -->
+      <div class="section">
+        <div class="section-header">
+          <h2>📈 今日推荐</h2>
+          <div class="actions">
+            <button class="btn btn-small" onclick="manualScan()">手动扫描</button>
+            <button class="btn btn-small btn-secondary" onclick="loadSuggestions()">刷新推荐</button>
+          </div>
+        </div>
+        <div class="stocks-grid" id="stocks-grid">
+          <!-- 推荐股票卡片会动态插入到这里 -->
+        </div>
+      </div>
+
+      <!-- 持仓 -->
+      <div class="section">
+        <div class="section-header">
+          <h2>📊 我的持仓</h2>
+          <div class="actions">
+            <button class="btn btn-small" onclick="loadPortfolio()">刷新持仓</button>
+          </div>
+        </div>
+        <div class="holdings-table-container">
+          <table class="holdings-table">
+            <thead>
+              <tr>
+                <th>股票</th>
+                <th>持仓数量</th>
+                <th>成本价</th>
+                <th>现价</th>
+                <th>市值</th>
+                <th>盈亏</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="holdings-body">
+              <!-- 持仓数据会动态插入到这里 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 交易记录 -->
+      <div class="section">
+        <div class="section-header">
+          <h2>📝 交易记录</h2>
+          <div class="actions">
+            <button class="btn btn-small" onclick="loadLogs()">刷新记录</button>
+          </div>
+        </div>
+        <div class="logs-table-container">
+          <table class="logs-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>操作</th>
+                <th>股票</th>
+                <th>数量</th>
+                <th>价格</th>
+                <th>金额</th>
+                <th>盈亏</th>
+              </tr>
+            </thead>
+            <tbody id="logs-body">
+              <!-- 交易记录会动态插入到这里 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 提示 -->
+  <div class="toast" id="toast">
+    <div class="toast-content">
+      <span id="toast-message"></span>
+      <button class="toast-close" onclick="hideToast()">×</button>
+    </div>
+  </div>
+
+  <!-- 确认弹窗 -->
+  <div id="modal-overlay">
+    <div class="modal">
+      <div class="modal-title" id="modal-title">确认操作</div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel">取消</button>
+        <button id="modal-confirm">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/api';
+    let authToken = null;
+    let currentUser = null;
+
+    // 认证相关函数
+    function checkAuth() {
+      authToken = localStorage.getItem('token');
+      currentUser = {
+        id: localStorage.getItem('user_id'),
+        username: localStorage.getItem('username')
+      };
+      
+      if (authToken && currentUser.id) {
+        // 验证 token 是否有效
+        fetch(`${API_BASE}/auth/check`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        .then(response => {
+          if (response.ok) {
+            return response.json();
+          }
+          throw new Error('Token 无效');
+        })
+        .then(data => {
+          if (data.success) {
+            // 显示用户信息
+            document.getElementById('user-info').style.display = 'flex';
+            document.getElementById('user-name').textContent = currentUser.username;
+            document.getElementById('user-avatar').textContent = currentUser.username.charAt(0).toUpperCase();
+            
+            // 显示应用内容
+            document.getElementById('no-auth-message').style.display = 'none';
+            document.getElementById('app-content').style.display = 'block';
+            
+            // 加载数据
+            loadPortfolio();
+            loadSuggestions();
+            loadLogs();
+            updateScanStatus();
+            setInterval(updateScanStatus, 10000);
+          } else {
+            logout();
+          }
+        })
+        .catch(() => {
+          logout();
+        });
+      } else {
+        // 未登录，显示登录提示
+        document.getElementById('no-auth-message').style.display = 'block';
+        document.getElementById('app-content').style.display = 'none';
+        document.getElementById('user-info').style.display = 'none';
+      }
+    }
+
+    function logout() {
+      localStorage.clear();
+      window.location.href = '/login.html';
+    }
+
+    // API 请求辅助函数（带认证）
+    function authFetch(url, options = {}) {
+      if (!authToken) {
+        toast('请先登录', 'error');
+        setTimeout(() => window.location.href = '/login.html', 1000);
+        return Promise.reject('未登录');
+      }
+      
+      const headers = {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json',
+        ...options.headers
+      };
+      
+      return fetch(url, { ...options, headers });
+    }
+
+    // Toast 提示
+    function toast(message, type = 'info') {
+      const toast = document.getElementById('toast');
+      const toastMessage = document.getElementById('toast-message');
+      
+      toastMessage.textContent = message;
+      toast.className = 'toast ' + type;
+      toast.classList.add('show');
+      
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    function hideToast() {
+      document.getElementById('toast').classList.remove('show');
+    }
+
+    // 模态框
+    function showModal(title, body, confirmText, confirmColor, onConfirm) {
+      const overlay = document.getElementById('modal-overlay');
+      document.getElementById('modal-title').textContent = title;
+      document.getElementById('modal-body').textContent = body;
+      const confirmBtn = document.getElementById('modal-confirm');
+      confirmBtn.textContent = confirmText || '确认';
+      confirmBtn.style.background = confirmColor || '#e63946';
+      overlay.style.display = 'flex';
+      
+      function close() { overlay.style.display = 'none'; }
+      
+      document.getElementById('modal-cancel').onclick = close;
+      overlay.onclick = function(e) { if (e.target === overlay) close(); };
+      confirmBtn.onclick = function() { close(); onConfirm(); };
+    }
+
+    // 扫描状态
+    function updateScanStatus() {
+      fetch(`${API_BASE}/scan/status`)
+        .then(r => r.json())
+        .then(data => {
+          const statusEl = document.getElementById('scan-status');
+          if (data.running) {
+            statusEl.textContent = '扫描中...';
+            statusEl.classList.add('active');
+          } else if (data.last_run) {
+            const lastRun = new Date(data.last_run);
+            const now = new Date();
+            const diffMin = Math.floor((now - lastRun) / 60000);
+            statusEl.textContent = `最近更新：${diffMin}分钟前`;
+            statusEl.classList.remove('active');
+          } else {
+            statusEl.textContent = '待扫描';
+            statusEl.classList.remove('active');
+          }
+        });
+    }
+
+    // 手动触发扫描
+    function manualScan() {
+      fetch(`${API_BASE}/scan/trigger`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          toast(data.message, data.success ? 'success' : 'error');
+          if (data.success) {
+            updateScanStatus();
+            setTimeout(loadSuggestions, 60000); // 1分钟后刷新推荐
+          }
+        });
+    }
+
+    // 加载推荐股票
+    function loadSuggestions() {
+      fetch(`${API_BASE}/suggestions`)
+        .then(r => r.json())
+        .then(data => {
+          const grid = document.getElementById('stocks-grid');
+          grid.innerHTML = '';
+          
+          data.items.forEach((item, idx) => {
+            const alreadyHolding = item.already_holding || false;
+            const card = document.createElement('div');
+            card.className = 'stock-card';
+            card.innerHTML = `
+              <div class="stock-header">
+                <div>
+                  <div class="stock-name">${item.name}</div>
+                  <div class="stock-code">${item.code}</div>
+                </div>
+                <div>
+                  <div class="stock-price">¥${item.current_price.toFixed(2)}</div>
+                  <div class="stock-change ${item.change_pct >= 0 ? 'positive' : 'negative'}">
+                    ${item.change_pct >= 0 ? '+' : ''}${item.change_pct.toFixed(2)}%
+                  </div>
+                </div>
+              </div>
+              <div class="stock-meta">
+                <span>评分: ${item.score}</span>
+                <span>RSI: ${item.rsi || '--'}</span>
+                <span>量比: ${item.vol_ratio ? item.vol_ratio.toFixed(1) + 'x' : '--'}</span>
+              </div>
+              <div class="stock-tags">
+                ${item.signals.map(signal => `<span class="tag">${signal}</span>`).join('')}
+              </div>
+              <div class="stock-actions">
+                <button class="btn" onclick="doBuy('${item.code}', '${item.name}', ${item.suggested_shares}, ${item.buy_price})">
+                  ${alreadyHolding ? '加仓' : '买入'}
+                </button>
+                <button class="btn btn-secondary" onclick="showStockDetail('${item.code}')">详情</button>
+              </div>
+            `;
+            grid.appendChild(card);
+          });
+          
+          if (data.updated_at) {
+            const time = new Date(data.updated_at).toLocaleString('zh-CN');
+            toast(`推荐已更新 (${time})`, 'success');
+          }
+        })
+        .catch(() => toast('加载推荐失败', 'error'));
+    }
+
+    // 加载持仓
+    function loadPortfolio() {
+      authFetch(`${API_BASE}/portfolio`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            const portfolio = data.data;
+            
+            // 更新概览
+            document.getElementById('total-assets').textContent = '¥ ' + portfolio.total_market_value.toFixed(2);
+            document.getElementById('cash').textContent = '¥ ' + portfolio.cash.toFixed(2);
+            document.getElementById('total-profit').textContent = '¥ ' + portfolio.total_profit.toFixed(2);
+            document.getElementById('profit-pct').textContent = portfolio.total_profit_pct.toFixed(2) + '%';
+            
+            // 设置盈亏颜色
+            const profitEl = document.getElementById('total-profit');
+            const pctEl = document.getElementById('profit-pct');
+            if (portfolio.total_profit >= 0) {
+              profitEl.className = 'value positive';
+              pctEl.className = 'value positive';
+            } else {
+              profitEl.className = 'value negative';
+              pctEl.className = 'value negative';
+            }
+            
+            // 更新持仓表格
+            const tbody = document.getElementById('holdings-body');
+            tbody.innerHTML = '';
+            
+            if (portfolio.holdings.length === 0) {
+              const row = document.createElement('tr');
+              row.innerHTML = `<td colspan="7" style="text-align: center; color: var(--muted); padding: 40px;">暂无持仓</td>`;
+              tbody.appendChild(row);
+            } else {
+              portfolio.holdings.forEach(h => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                  <td>
+                    <div style="font-weight: 500;">${h.name}</div>
+                    <div style="font-size: 12px; color: var(--muted);">${h.code}</div>
+                  </td>
+                  <td>${h.shares}</td>
+                  <td>¥${h.avg_price.toFixed(2)}</td>
+                  <td>
+                    <div>¥${h.current_price.toFixed(2)}</div>
+                    <div class="stock-change ${h.change_pct >= 0 ? 'positive' : 'negative'}" style="font-size: 11px;">
+                      ${h.change_pct >= 0 ? '+' : ''}${h.change_pct.toFixed(2)}%
+                    </div>
+                  </td>
+                  <td>¥${h.market_value.toFixed(2)}</td>
+                  <td>
+                    <div class="${h.profit >= 0 ? 'positive' : 'negative'}" style="font-weight: 500;">
+                      ${h.profit >= 0 ? '+' : ''}¥${h.profit.toFixed(2)}
+                    </div>
+                    <div class="${h.profit_pct >= 0 ? 'positive' : 'negative'}" style="font-size: 11px;">
+                      ${h.profit_pct >= 0 ? '+' : ''}${h.profit_pct.toFixed(2)}%
+                    </div>
+                  </td>
+                  <td>
+                    <button class="btn-small" onclick="sellPrompt('${h.code}', '${h.name}', ${h.current_price}, ${h.shares})">卖出</button>
+                  </td>
+                `;
+                tbody.appendChild(row);
+              });
+            }
+          }
+        })
+        .catch(() => toast('加载持仓失败', 'error'));
+    }
+
+    // 加载交易记录
+    function loadLogs() {
+      authFetch(`${API_BASE}/logs`)
+        .then(r => r.json())
+        .then(logs => {
+          const tbody = document.getElementById('logs-body');
+          tbody.innerHTML = '';
+          
+          if (logs.length === 0) {
+            const row = document.createElement('tr');
+            row.innerHTML = `<td colspan="7" style="text-align: center; color: var(--muted); padding: 40px;">暂无交易记录</td>`;
+            tbody.appendChild(row);
+          } else {
+            logs.forEach(log => {
+              const time = new Date(log.created_at).toLocaleString('zh-CN');
+              const row = document.createElement('tr');
+              row.innerHTML = `
+                <td>${time}</td>
+                <td><span class="tag" style="background: ${log.action === '买入' ? 'rgba(42, 157, 143, 0.1)' : 'rgba(230, 57, 70, 0.1)'}; color: ${log.action === '买入' ? 'var(--green)' : 'var(--red)'};">${log.action}</span></td>
+                <td>
+                  <div>${log.stock_name}</div>
+                  <div style="font-size: 11px; color: var(--muted);">${log.stock_code}</div>
+                </td>
+                <td>${log.shares}</td>
+                <td>¥${log.price.toFixed(2)}</td>
+                <td>¥${log.amount.toFixed(2)}</td>
+                <td>
+                  ${log.profit !== null ? `
+                    <div class="${log.profit >= 0 ? 'positive' : 'negative'}" style="font-weight: 500;">
+                      ${log.profit >= 0 ? '+' : ''}¥${log.profit.toFixed(2)}
+                    </div>
+                    <div class="${log.profit_pct >= 0 ? 'positive' : 'negative'}" style="font-size: 11px;">
+                      ${log.profit_pct >= 0 ? '+' : ''}${log.profit_pct.toFixed(2)}%
+                    </div>
+                  ` : '--'}
+                </td>
+              `;
+              tbody.appendChild(row);
+            });
+          }
+        })
+        .catch(() => toast('加载交易记录失败', 'error'));
+    }
+
+    // 买入操作
+    function doBuy(code, name, shares, price) {
+      showModal('确认模拟买入',
+        `${name}(${code})\n数量：${shares} 股\n价格：¥${price}\n预计花费：¥${(shares * price).toFixed(2)}`,
+        '确认买入', '#e63946',
+        function() {
+          authFetch(`${API_BASE}/trade/buy`, {
+            method: 'POST',
+            body: JSON.stringify({ code, name, shares, price })
+          })
+          .then(r => r.json())
+          .then(data => {
+            toast(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+              loadPortfolio();
+              loadLogs();
+              loadSuggestions(); // 刷新推荐（因为持仓状态可能变了）
+            }
+          })
+          .catch(() => toast('买入失败', 'error'));
+        });
+    }
+
+    // 卖出提示
+    function sellPrompt(code, name, price, maxShares) {
+      const inputId = `sell-shares-${code}`;
+      const modalBody = `
+        ${name}(${code})\n当前价格：¥${price}\n最大可卖：${maxShares} 股\n\n卖出数量：
+        <input type="number" id="${inputId}" value="${maxShares}" min="100" max="${maxShares}" step="100" style="width: 100px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); margin-top: 8px;">
+      `;
+      
+      showModal('确认模拟卖出', modalBody, '确认卖出', '#2a9d8f',
+        function() {
+          const shares = parseInt(document.getElementById(inputId).value);
+          if (shares < 100 || shares > maxShares || isNaN(shares)) {
+            toast('请输入有效的卖出数量（100的整数倍）', 'error');
+            return;
+          }
+          
+          authFetch(`${API_BASE}/trade/sell`, {
+            method: 'POST',
+            body: JSON.stringify({ code, shares, price })
+          })
+          .then(r => r.json())
+          .then(data => {
+            toast(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+              loadPortfolio();
+              loadLogs();
+            }
+          })
+          .catch(() => toast('卖出失败', 'error'));
+        });
+    }
+
+    // 股票详情（暂时简单实现）
+    function showStockDetail(code) {
+      toast(`查看 ${code} 详情（功能开发中）`, 'info');
+    }
+
+    // 页面加载
+    window.addEventListener('DOMContentLoaded', checkAuth);
+  </script>
+</body>
+</html>

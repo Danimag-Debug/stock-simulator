@@ -1,0 +1,24 @@
+[
+  {
+    "time": "2026-03-25T17:46:03.680753",
+    "action": "卖出",
+    "code": "000333",
+    "name": "美的集团",
+    "shares": 100,
+    "price": 38.01,
+    "amount": 3792.2,
+    "profit": -8.8,
+    "profit_pct": -0.23,
+    "commission": 8.8
+  },
+  {
+    "time": "2026-03-25T16:46:51.931226",
+    "action": "买入",
+    "code": "000333",
+    "name": "美的集团",
+    "shares": 100,
+    "price": 38.01,
+    "amount": 3806.0,
+    "commission": 5
+  }
+]
