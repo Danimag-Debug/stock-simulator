@@ -309,13 +309,16 @@ def trigger_scan():
     if scan_status["running"]:
         return jsonify({"success": False, "message": "扫描正在进行中，请稍候"})
 
+    # 先同步设置 running=True，再启动线程
+    # 避免前端轮询时线程还未启动就误判为"已完成"
+    scan_status["running"] = True
+    scan_status.pop("last_error", None)
+
     def run():
-        scan_status["running"] = True
         try:
             run_stock_scan(top_n=9)
         except Exception as e:
             print(f"[ERROR] 扫描失败: {e}")
-            # 记录扫描失败状态
             scan_status["last_error"] = str(e)
         finally:
             scan_status["running"] = False

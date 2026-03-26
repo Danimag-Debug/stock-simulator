@@ -352,8 +352,8 @@
         <div class="section-header">
           <h2>📈 今日推荐</h2>
           <div class="actions">
-            <button class="btn btn-small" onclick="triggerScan()">手动扫描</button>
-            <button class="btn btn-small btn-secondary" onclick="loadSuggestions()">刷新推荐</button>
+            <button class="btn btn-small" id="btn-scan" onclick="triggerScan()">手动扫描</button>
+            <button class="btn btn-small btn-secondary" id="btn-refresh" onclick="refreshSuggestions()">刷新推荐</button>
           </div>
         </div>
         <div class="stocks-grid" id="stocks-grid">
@@ -581,6 +581,24 @@
       triggerScan();
     }
 
+    // 刷新推荐（带明显 loading 反馈）
+    function refreshSuggestions() {
+      const btn = document.getElementById('btn-refresh');
+      if (btn) { btn.disabled = true; btn.textContent = '刷新中...'; }
+      const grid = document.getElementById('stocks-grid');
+      grid.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">⏳ 正在获取实时价格...</div>';
+      fetch(`${API_BASE}/suggestions`)
+        .then(r => r.json())
+        .then(data => {
+          renderSuggestions(data);
+          toast('推荐价格已刷新', 'success');
+        })
+        .catch(() => toast('刷新失败，请重试', 'error'))
+        .finally(() => {
+          if (btn) { btn.disabled = false; btn.textContent = '刷新推荐'; }
+        });
+    }
+
     // 加载推荐股票
     function loadSuggestions() {
       fetch(`${API_BASE}/suggestions`)
@@ -590,8 +608,15 @@
           }
           return r.json();
         })
-        .then(data => {
-          const grid = document.getElementById('stocks-grid');
+        .then(data => renderSuggestions(data))
+        .catch(err => {
+          console.error('加载推荐失败:', err);
+        });
+    }
+
+    // 渲染推荐列表（抽成独立函数）
+    function renderSuggestions(data) {
+      const grid = document.getElementById('stocks-grid');
           grid.innerHTML = '';
           
           if (!data.items || data.items.length === 0) {
@@ -692,29 +717,9 @@
           
           if (data.updated_at) {
             const time = new Date(data.updated_at).toLocaleString('zh-CN');
-            toast(`推荐已更新 (${time})`, 'success');
+            const scanTime = document.getElementById('scan-time');
+            if (scanTime) scanTime.textContent = time;
           }
-        })
-        .catch(err => {
-          console.error('加载推荐失败:', err);
-          const grid = document.getElementById('stocks-grid');
-          grid.innerHTML = `
-            <div class="no-data-message">
-              <div style="font-size:24px; margin-bottom:12px;">⚠️</div>
-              <div style="font-size:16px; font-weight:600; margin-bottom:8px;">加载推荐失败</div>
-              <div style="color:var(--muted); font-size:14px; margin-bottom:16px;">
-                服务器连接异常，请稍后重试
-              </div>
-              <button class="btn" onclick="loadSuggestions()" style="margin-top:8px;">
-                <span class="icon">🔄</span> 刷新页面
-              </button>
-              <div style="margin-top:16px; font-size:12px; color:var(--muted);">
-                错误信息: ${err.message || '未知错误'}
-              </div>
-            </div>
-          `;
-          toast('加载推荐失败，请检查网络连接', 'error');
-        });
     }
 
     // 加载持仓
@@ -974,6 +979,13 @@
         window.location.href = '/login';
         return;
       }
+
+      const btn = document.getElementById('btn-scan');
+      if (btn) { btn.disabled = true; btn.textContent = '扫描中...'; }
+
+      // 显示 loading 占位
+      const grid = document.getElementById('stocks-grid');
+      grid.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">🔍 全市场扫描中，约需1-3分钟，请稍候...</div>';
       
       toast('扫描已启动，正在获取全市场行情...', 'info');
       
@@ -1000,20 +1012,29 @@
                   loadSuggestions();
                   updateScanStatus();
                   toast('扫描完成！推荐已更新', 'success');
+                  if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
                 } else if (pollCount >= maxPolls) {
                   clearInterval(pollInterval);
                   toast('扫描超时，请手动刷新推荐', 'error');
+                  if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
                 }
+              })
+              .catch(() => {
+                // 网络错误不停止轮询
               });
           }, 5000); // 每5秒轮询一次
           
         } else {
           toast(data.message || '扫描启动失败', 'error');
+          loadSuggestions(); // 还原当前推荐
+          if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
         }
       })
       .catch(err => {
         console.error('扫描触发失败:', err);
         toast('扫描触发失败，请稍后重试', 'error');
+        loadSuggestions(); // 还原当前推荐
+        if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
       });
     }
 
