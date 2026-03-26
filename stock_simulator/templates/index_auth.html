@@ -481,16 +481,14 @@
           logout();
         });
       } else {
-        // 未登录，显示登录提示
-        document.getElementById('no-auth-message').style.display = 'block';
-        document.getElementById('app-content').style.display = 'none';
-        document.getElementById('user-info').style.display = 'none';
+        // 未登录，直接跳转到登录页
+        window.location.href = '/login';
       }
     }
 
     function logout() {
       localStorage.clear();
-      window.location.href = '/login.html';
+      window.location.href = '/login';
     }
 
     // API 请求辅助函数（带认证）

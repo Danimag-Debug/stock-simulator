@@ -97,43 +97,12 @@ def generate_token(user_id: int):
 
 @app.route("/")
 def index():
-    """主页面 - 根据是否登录显示不同页面"""
-    # 检查请求头中的token
-    token = None
-    auth_header = request.headers.get('Authorization')
-    if auth_header and auth_header.startswith('Bearer '):
-        token = auth_header.split(' ')[1]
-    
-    # 如果从cookie中获取（前端页面跳转时可能用到）
-    if not token and request.cookies.get('token'):
-        token = request.cookies.get('token')
-    
-    if token:
-        try:
-            # 验证token是否有效
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=[app.config['JWT_ALGORITHM']])
-            user_id = data['user_id']
-            
-            # 检查用户是否存在
-            conn = database.get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
-            user = cursor.fetchone()
-            conn.close()
-            
-            if user:
-                # 用户已登录，显示主应用页面
-                return send_from_directory(
-                    os.path.join(os.path.dirname(__file__), "templates"), "index_auth.html"
-                )
-        except:
-            pass  # token无效，继续显示登录页面
-    
-    # 未登录或token无效，重定向到登录页面
+    """主页面 - 直接返回主应用页面，鉴权由前端JS负责"""
     return send_from_directory(
-        os.path.join(os.path.dirname(__file__), "templates"), "login.html"
+        os.path.join(os.path.dirname(__file__), "templates"), "index_auth.html"
     )
 
+@app.route("/login")
 @app.route("/login.html")
 def login_page():
     """登录页面"""
