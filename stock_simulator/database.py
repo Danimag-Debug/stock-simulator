@@ -352,11 +352,11 @@ def load_suggestions() -> List[Dict]:
     conn = get_db()
     cursor = conn.cursor()
     
-    # 获取最新的 5 条推荐
+    # 获取最新的 9 条推荐
     cursor.execute("""
         SELECT * FROM suggestions 
         ORDER BY updated_at DESC 
-        LIMIT 5
+        LIMIT 9
     """)
     rows = cursor.fetchall()
     conn.close()

@@ -71,43 +71,54 @@ INITIAL_CASH = 150000.0  # 调整为15万元
 
 def _build_all_market_codes() -> List[str]:
     """
-    构建全市场 A 股代码列表（无需任何接口权限，直接枚举）
+    构建全市场 A 股代码列表（沪深两市全部股票）
+    沪市：600000-605999, 688000-688999（科创板）
+    深市：000001-004999, 300000-301000（创业板）
     """
     ranges = [
-        range(600000, 601000),
-        range(601000, 602000),
-        range(603000, 604000),
-        range(605000, 606000),
-        range(1, 1000),
-        range(1000, 2000),
+        # 沪市主板
+        range(600000, 606000),
+        # 科创板
+        range(688000, 689000),
+        # 深市主板
+        range(1, 5000),
+        # 中小板
         range(2000, 3000),
-        range(3000, 4000),
+        # 创业板
         range(300000, 301000),
-        range(301000, 302000),
     ]
     codes = []
     for r in ranges:
         for n in r:
             codes.append(str(n).zfill(6))
+    print(f"[INFO] 全市场代码池构建完成，共 {len(codes)} 只股票代码")
     return codes
 
 def get_stock_list() -> List[Dict]:
     """
-    获取全市场实时行情（批量拉取，无需高权限）
+    获取全市场实时行情（强制使用真实数据）
     """
     import pandas as pd
-
-    if TUSHARE_AVAILABLE:
-        all_codes = _build_all_market_codes()
-        print(f"[INFO] 全市场扫描启动，代码池共 {len(all_codes)} 只...")
+    
+    # 强制要求 Tushare 可用
+    if not TUSHARE_AVAILABLE:
+        raise RuntimeError("Tushare 不可用！请确保已配置有效的 TUSHARE_TOKEN。")
+    
+    all_codes = _build_all_market_codes()
+    print(f"[INFO] 全市场扫描启动，代码池共 {len(all_codes)} 只股票...")
 
         all_quotes = []
-        batch_size = 80
+        batch_size = 80  # Tushre API 单次最大数量
         total_batches = (len(all_codes) + batch_size - 1) // batch_size
         success_batches = 0
-
+        failed_batches = 0
+        
+        print(f"[INFO] 开始批量获取行情数据，共 {total_batches} 个批次...")
+        
         for i in range(0, len(all_codes), batch_size):
             batch = all_codes[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            
             try:
                 df_rt = ts.get_realtime_quotes(batch)
                 if df_rt is not None and not df_rt.empty:
@@ -118,86 +129,76 @@ def get_stock_list() -> List[Dict]:
                     if not df_valid.empty:
                         all_quotes.append(df_valid)
                         success_batches += 1
+                        print(f"[进度] 批次 {batch_num}/{total_batches} 成功，获取 {len(df_valid)} 只股票")
+                    else:
+                        failed_batches += 1
+                else:
+                    failed_batches += 1
             except Exception as e:
-                pass  # 静默跳过失败批次
+                failed_batches += 1
+                print(f"[WARN] 批次 {batch_num}/{total_batches} 失败: {e}")
 
         if not all_quotes:
-            print("[ERROR] 全市场实时行情拉取全部失败，降级到模拟数据")
-        else:
-            df_all = pd.concat(all_quotes, ignore_index=True)
-            print(f"[INFO] 获取到原始行情 {len(df_all)} 条（{success_batches}/{total_batches} 批次成功）")
+            raise RuntimeError(f"全市场实时行情拉取全部失败！{success_batches} 成功/{failed_batches} 失败")
+        
+        if success_batches < total_batches // 2:
+            print(f"[WARN] 仅成功获取 {success_batches}/{total_batches} 批次数据，部分数据可能不全")
+        
+        df_all = pd.concat(all_quotes, ignore_index=True)
+        print(f"[INFO] 获取到原始行情 {len(df_all)} 条（{success_batches}/{total_batches} 批次成功）")
 
-            result = []
-            for _, row in df_all.iterrows():
-                try:
-                    code = str(row['code']).zfill(6)
-                    name = str(row['name']).strip()
+        result = []
+        for _, row in df_all.iterrows():
+            try:
+                code = str(row['code']).zfill(6)
+                name = str(row['name']).strip()
 
-                    # 过滤无名、ST、退市
-                    if not name or 'ST' in name or '退' in name or name == 'nan':
-                        continue
-
-                    price_str = str(row['price']).strip()
-                    pre_close_str = str(row['pre_close']).strip()
-                    if not price_str or not pre_close_str:
-                        continue
-
-                    current_price = float(price_str)
-                    pre_close = float(pre_close_str)
-
-                    if current_price <= 0 or pre_close <= 0:
-                        continue
-
-                    change_pct = round((current_price - pre_close) / pre_close * 100, 2)
-
-                    volume_str = str(row.get('volume', '0')).strip()
-                    amount_str = str(row.get('amount', '0')).strip()
-                    volume = int(float(volume_str)) if volume_str else 0
-                    amount = float(amount_str) if amount_str else 0
-
-                    # ── 筛选条件（针对中线策略）──
-                    if not (-2 <= change_pct <= 8):      # 排除异常涨跌
-                        continue
-                    if current_price < 3 or current_price > 800:  # 价格区间
-                        continue
-                    if amount < 5e7:                      # 成交额至少5000万
-                        continue
-
-                    result.append({
-                        "code": code,
-                        "name": name,
-                        "current_price": current_price,
-                        "change_pct": change_pct,
-                        "volume": volume,
-                        "amount": amount
-                    })
-                except (ValueError, TypeError):
+                # 过滤无名、ST、退市
+                if not name or 'ST' in name or '退' in name or name == 'nan':
                     continue
 
-            # 随机打乱后排序
-            random.shuffle(result)
-            result.sort(key=lambda x: x["change_pct"], reverse=True)
-            print(f"[INFO] 全市场筛选完成，共 {len(result)} 只候选股票")
-            return result
+                price_str = str(row['price']).strip()
+                pre_close_str = str(row['pre_close']).strip()
+                if not price_str or not pre_close_str:
+                    continue
 
-    # 降级：使用内置股票池
-    print("[WARN] Tushare 不可用，使用内置模拟数据")
-    result = []
-    for stock in MOCK_STOCKS:
-        code, name, base_price = stock
-        # 在真实价格基础上添加小幅波动
-        change_pct = random.uniform(-3, 5)
-        current_price = round(base_price * (1 + change_pct / 100), 2)
-        # 根据价格计算合理的成交额
-        amount = base_price * random.uniform(0.5, 3) * 1e8
-        volume = int(amount / current_price)
-        result.append({
-            "code": code, "name": name,
-            "current_price": current_price, "change_pct": round(change_pct, 2),
-            "volume": volume, "amount": amount
-        })
-    result.sort(key=lambda x: x["change_pct"], reverse=True)
-    return result
+                current_price = float(price_str)
+                pre_close = float(pre_close_str)
+
+                if current_price <= 0 or pre_close <= 0:
+                    continue
+
+                change_pct = round((current_price - pre_close) / pre_close * 100, 2)
+
+                volume_str = str(row.get('volume', '0')).strip()
+                amount_str = str(row.get('amount', '0')).strip()
+                volume = int(float(volume_str)) if volume_str else 0
+                amount = float(amount_str) if amount_str else 0
+
+                # ── 筛选条件（针对中线策略）──
+                if not (-2 <= change_pct <= 8):      # 排除异常涨跌
+                    continue
+                if current_price < 3 or current_price > 800:  # 价格区间
+                    continue
+                if amount < 5e7:                      # 成交额至少5000万
+                    continue
+
+                result.append({
+                    "code": code,
+                    "name": name,
+                    "current_price": current_price,
+                    "change_pct": change_pct,
+                    "volume": volume,
+                    "amount": amount
+                })
+            except (ValueError, TypeError):
+                continue
+
+        # 随机打乱后排序
+        random.shuffle(result)
+        result.sort(key=lambda x: x["change_pct"], reverse=True)
+        print(f"[INFO] 全市场筛选完成，共 {len(result)} 只候选股票")
+        return result
 
 def get_stock_name_tushare(code: str) -> Optional[str]:
     """通过 Tushare 获取股票名称"""
@@ -217,64 +218,38 @@ def get_stock_name_tushare(code: str) -> Optional[str]:
     return None
 
 def get_hist_data(code: str, days: int = 60) -> Optional[List[Dict]]:
-    """获取历史日线数据（Tushare 真实 或 模拟）"""
+    """获取历史日线数据（强制使用真实数据）"""
+    
+    if not TUSHARE_AVAILABLE:
+        raise RuntimeError("Tushare 不可用，无法获取历史数据！")
 
-    if TUSHARE_AVAILABLE:
-        try:
-            pro = ts.pro_api()
-            ts_code = f"{code}.SH" if code.startswith("6") else f"{code}.SZ"
-            end_date = datetime.now().strftime('%Y%m%d')
-            start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y%m%d')
+    try:
+        pro = ts.pro_api()
+        ts_code = f"{code}.SH" if code.startswith("6") else f"{code}.SZ"
+        end_date = datetime.now().strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y%m%d')
 
-            df = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
-            if df.empty:
-                return None
+        df = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        if df.empty:
+            print(f"[WARN] 股票 {code} 无历史数据")
+            return None
 
-            df = df.sort_values('trade_date').tail(days)
-            result = []
-            for _, row in df.iterrows():
-                result.append({
-                    "date": datetime.strptime(row['trade_date'], '%Y%m%d'),
-                    "open": float(row['open']),
-                    "close": float(row['close']),
-                    "high": float(row['high']),
-                    "low": float(row['low']),
-                    "volume": int(row['vol']),
-                    "amount": float(row['amount']) * 1000
-                })
-            return result
-        except Exception as e:
-            print(f"[WARN] Tushare 获取 {code} 历史数据失败: {e}，使用模拟数据")
-
-    # 模拟历史数据
-    base_price = random.uniform(15, 150)
-    data = []
-    price = base_price
-
-    for i in range(days):
-        date = datetime.now() - timedelta(days=days - i)
-        change = random.uniform(-0.05, 0.05)
-        price = max(price * (1 + change), 3)
-
-        volatility = price * 0.03
-        open_price = price + random.uniform(-volatility, volatility)
-        close_price = price
-        high_price = max(open_price, close_price) * random.uniform(1, 1.02)
-        low_price = min(open_price, close_price) * random.uniform(0.98, 1)
-        volume = int(random.uniform(1, 10) * 1e6)
-        amount = volume * close_price
-
-        data.append({
-            "date": date,
-            "open": round(open_price, 2),
-            "close": round(close_price, 2),
-            "high": round(high_price, 2),
-            "low": round(low_price, 2),
-            "volume": volume,
-            "amount": amount
-        })
-
-    return data
+        df = df.sort_values('trade_date').tail(days)
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "date": datetime.strptime(row['trade_date'], '%Y%m%d'),
+                "open": float(row['open']),
+                "close": float(row['close']),
+                "high": float(row['high']),
+                "low": float(row['low']),
+                "volume": int(row['vol']),
+                "amount": float(row['amount']) * 1000
+            })
+        return result
+    except Exception as e:
+        print(f"[ERROR] Tushare 获取 {code} 历史数据失败: {e}")
+        raise RuntimeError(f"获取股票 {code} 历史数据失败: {e}")
 
 # ─────────────────────────────────────────────
 # 技术指标计算
@@ -443,8 +418,8 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float) -
 # 主选股流程
 # ─────────────────────────────────────────────
 
-def run_stock_scan(top_n: int = 5) -> List[Dict]:
-    """全市场扫描"""
+def run_stock_scan(top_n: int = 9) -> List[Dict]:
+    """全市场扫描 - 强制真实数据，返回9只推荐股票"""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 开始全市场扫描...")
 
     stock_list = get_stock_list()
@@ -452,23 +427,25 @@ def run_stock_scan(top_n: int = 5) -> List[Dict]:
         print("[WARN] 无法获取股票列表")
         return []
 
-    # 取候选股：优先选取涨幅居前的股票，扩大扫描范围
-    # 如果股票数量足够，取更多候选进行更全面的分析
-    candidates_limit = min(len(stock_list), 800)  # 最多扫描800只股票
-    candidates = stock_list[:candidates_limit]
+    # 使用全市场所有股票进行分析
+    candidates = stock_list
+    print(f"[INFO] 对全部 {len(candidates)} 只股票进行技术分析...")
     
-    # 随机打乱以避免每次都扫描相同的股票
-    import random as _random
-    _random.shuffle(candidates)
+    # 按涨幅排序，优先分析涨幅较好的股票
+    candidates.sort(key=lambda x: x["change_pct"], reverse=True)
     
-    # 但确保一些涨幅好的股票在候选池中
-    top_gainers = sorted(stock_list, key=lambda x: x["change_pct"], reverse=True)[:100]
-    for stock in top_gainers:
-        if stock not in candidates[:600]:  # 确保在候选池前半部分
-            candidates.insert(0, stock)
+    # 限制分析数量以提高效率，但确保覆盖足够多的股票
+    max_analyze = min(len(candidates), 1000)  # 最多分析1000只股票
+    candidates = candidates[:max_analyze]
+    print(f"[INFO] 将分析前 {max_analyze} 只涨幅较好的股票...")
 
     results = []
+    analyzed_count = 0
     for stock in candidates:
+        analyzed_count += 1
+        if analyzed_count % 100 == 0:
+            print(f"[进度] 已分析 {analyzed_count}/{max_analyze} 只股票...")
+        
         result = score_stock(stock["code"], stock["name"], stock["current_price"], stock["change_pct"])
         if result and result["score"] >= 50:
             results.append(result)
@@ -476,7 +453,7 @@ def run_stock_scan(top_n: int = 5) -> List[Dict]:
     results.sort(key=lambda x: x["score"], reverse=True)
     top = results[:top_n]
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 扫描完成，找到 {len(results)} 只候选，返回前 {len(top)} 只")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 扫描完成，找到 {len(results)} 只候选，返回前 {len(top)} 只推荐股票")
 
     # 为每个用户计算建议股数（全局推荐，但股数根据用户资金计算）
     # 这里我们使用默认资金计算，上线后每个用户会看到不同股数

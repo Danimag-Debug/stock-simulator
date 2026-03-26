@@ -32,7 +32,7 @@ def scheduled_scan():
     try:
         from datetime import datetime
         scan_status["last_run"] = datetime.now().isoformat()
-        run_stock_scan(top_n=5)
+        run_stock_scan(top_n=9)
     finally:
         scan_status["running"] = False
 
@@ -121,7 +121,7 @@ def trigger_scan():
     def run():
         scan_status["running"] = True
         try:
-            run_stock_scan(top_n=5)
+            run_stock_scan(top_n=9)
         finally:
             scan_status["running"] = False
 
