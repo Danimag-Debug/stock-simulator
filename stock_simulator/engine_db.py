@@ -591,10 +591,39 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
     return suggestions
 
 def load_suggestions() -> Dict:
-    """加载推荐列表"""
+    """加载推荐列表，并用实时行情刷新当前价格"""
     suggestions = database.load_suggestions()
     updated_at = database.get_suggestions_updated_at()
-    
+
+    # 如果 Tushare 可用且有推荐，实时刷新 current_price 和 change_pct
+    if TUSHARE_AVAILABLE and suggestions:
+        try:
+            codes = [s["stock_code"] for s in suggestions]
+            df_rt = ts.get_realtime_quotes(codes)
+            if df_rt is not None and not df_rt.empty:
+                price_map = {}
+                for _, row in df_rt.iterrows():
+                    code = str(row.get("code", "")).zfill(6)
+                    try:
+                        price = float(str(row.get("price", "0")).strip())
+                        pre_close = float(str(row.get("pre_close", "0")).strip())
+                        if price > 0 and pre_close > 0:
+                            change_pct = round((price - pre_close) / pre_close * 100, 2)
+                            price_map[code] = {"price": price, "change_pct": change_pct}
+                    except (ValueError, TypeError):
+                        pass
+                # 用实时价格覆盖数据库中的旧价格
+                for s in suggestions:
+                    code = s.get("stock_code", "")
+                    if code in price_map:
+                        s["current_price"] = price_map[code]["price"]
+                        s["change_pct"] = price_map[code]["change_pct"]
+                        # 同步刷新建议买入价（取实时价微涨0.2%）
+                        s["buy_price"] = round(price_map[code]["price"] * 1.002, 2)
+                print(f"[INFO] 推荐列表实时价格已刷新，共 {len(price_map)} 只")
+        except Exception as e:
+            print(f"[WARN] 推荐列表实时价格刷新失败，返回上次扫描价格: {e}")
+
     return {
         "updated_at": updated_at,
         "items": suggestions
