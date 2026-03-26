@@ -352,7 +352,7 @@
         <div class="section-header">
           <h2>📈 今日推荐</h2>
           <div class="actions">
-            <button class="btn btn-small" onclick="manualScan()">手动扫描</button>
+            <button class="btn btn-small" onclick="triggerScan()">手动扫描</button>
             <button class="btn btn-small btn-secondary" onclick="loadSuggestions()">刷新推荐</button>
           </div>
         </div>
@@ -576,17 +576,9 @@
         });
     }
 
-    // 手动触发扫描
+    // 手动触发扫描（兼容旧调用）
     function manualScan() {
-      fetch(`${API_BASE}/scan/trigger`, { method: 'POST' })
-        .then(r => r.json())
-        .then(data => {
-          toast(data.message, data.success ? 'success' : 'error');
-          if (data.success) {
-            updateScanStatus();
-            setTimeout(loadSuggestions, 60000); // 1分钟后刷新推荐
-          }
-        });
+      triggerScan();
     }
 
     // 加载推荐股票
@@ -662,12 +654,39 @@
                 ${signals.map(signal => `<span class="tag">${signal}</span>`).join('')}
               </div>
               <div class="stock-actions">
-                <button class="btn" onclick="doBuy('${code}', '${name}', ${item.suggested_shares || 100}, ${buyPrice})">
+                <button class="btn btn-buy" data-code="${code}" data-name="${name}" data-shares="${item.suggested_shares || 100}" data-price="${buyPrice}">
                   ${alreadyHolding ? '加仓' : '买入'}
                 </button>
-                <button class="btn btn-secondary" onclick="showStockDetail('${code}', '${JSON.stringify({name: name, curPrice: curPrice, buyPrice: buyPrice, stopLoss: stopLoss, takeProfit: takeProfit, signals: signals, score: item.score}).replace(/'/g, "\\'")}')">详情</button>
+                <button class="btn btn-secondary btn-detail" data-code="${code}" data-name="${name}" data-curprice="${curPrice}" data-buyprice="${buyPrice}" data-stoploss="${stopLoss}" data-takeprofit="${takeProfit}" data-score="${item.score || 0}" data-signals="${encodeURIComponent(JSON.stringify(signals))}">详情</button>
               </div>
             `;
+            
+            // 使用事件监听，避免内联 onclick 的 JSON 转义问题
+            card.querySelector('.btn-buy').addEventListener('click', function() {
+              doBuy(code, name, item.suggested_shares || 100, buyPrice);
+            });
+            
+            card.querySelector('.btn-detail').addEventListener('click', function() {
+              const btn = this;
+              const sigStr = btn.getAttribute('data-signals');
+              let sigs = [];
+              try {
+                sigs = JSON.parse(decodeURIComponent(sigStr));
+              } catch(e) {}
+              showStockDetail(
+                btn.getAttribute('data-code'),
+                JSON.stringify({
+                  name: btn.getAttribute('data-name'),
+                  curPrice: parseFloat(btn.getAttribute('data-curprice')),
+                  buyPrice: parseFloat(btn.getAttribute('data-buyprice')),
+                  stopLoss: parseFloat(btn.getAttribute('data-stoploss')),
+                  takeProfit: parseFloat(btn.getAttribute('data-takeprofit')),
+                  score: parseFloat(btn.getAttribute('data-score')),
+                  signals: sigs
+                })
+              );
+            });
+            
             grid.appendChild(card);
           });
           
@@ -948,7 +967,7 @@
       document.body.appendChild(modal);
     }
 
-    // 手动触发扫描
+    // 手动触发扫描（带轮询状态）
     function triggerScan() {
       if (!authToken) {
         toast('请先登录', 'error');
@@ -956,20 +975,40 @@
         return;
       }
       
-      toast('开始扫描，请稍候...', 'info');
+      toast('扫描已启动，正在获取全市场行情...', 'info');
       
       authFetch(`${API_BASE}/scan/trigger`, {
         method: 'POST'
       })
       .then(r => r.json())
       .then(data => {
-        toast(data.message, data.success ? 'success' : 'error');
         if (data.success) {
-          // 等待3秒后刷新推荐数据
-          setTimeout(() => {
-            loadSuggestions();
-            updateScanStatus();
-          }, 3000);
+          toast('扫描进行中，约需1-3分钟，将自动刷新推荐...', 'info');
+          updateScanStatus();
+          
+          // 开始轮询扫描状态，直到扫描完成
+          let pollCount = 0;
+          const maxPolls = 60; // 最多轮询60次（5分钟）
+          const pollInterval = setInterval(() => {
+            pollCount++;
+            fetch(`${API_BASE}/scan/status`)
+              .then(r => r.json())
+              .then(statusData => {
+                if (!statusData.running) {
+                  // 扫描已完成
+                  clearInterval(pollInterval);
+                  loadSuggestions();
+                  updateScanStatus();
+                  toast('扫描完成！推荐已更新', 'success');
+                } else if (pollCount >= maxPolls) {
+                  clearInterval(pollInterval);
+                  toast('扫描超时，请手动刷新推荐', 'error');
+                }
+              });
+          }, 5000); // 每5秒轮询一次
+          
+        } else {
+          toast(data.message || '扫描启动失败', 'error');
         }
       })
       .catch(err => {

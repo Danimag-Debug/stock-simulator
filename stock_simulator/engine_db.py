@@ -28,15 +28,20 @@ try:
     else:
         # 尝试从配置文件读取
         try:
-            from .tushare_config import TUSHARE_TOKEN
+            # 使用绝对导入路径
+            import sys
+            import os
+            sys.path.insert(0, os.path.dirname(__file__))
+            from tushare_config import TUSHARE_TOKEN
             if TUSHARE_TOKEN and TUSHARE_TOKEN != "你的Tushare Token粘贴在这里":
                 ts.set_token(TUSHARE_TOKEN)
                 TUSHARE_AVAILABLE = True
                 print("[INFO] Tushare 已启用（配置文件），使用真实行情数据")
             else:
                 print("[WARN] Tushare Token 未配置，无法获取真实行情数据")
-        except ImportError:
-            print("[WARN] 未找到 tushare_config.py，无法获取真实行情数据")
+        except ImportError as e:
+            print(f"[WARN] 未找到 tushare_config.py，无法获取真实行情数据: {e}")
+            print(f"[DEBUG] Current dir: {os.getcwd()}, __file__: {__file__}")
 except ImportError:
     print("[WARN] 未安装 tushare，无法获取真实行情数据")
 
@@ -128,7 +133,10 @@ def get_stock_list() -> List[Dict]:
     
     # 检查 Tushare 是否可用
     if not TUSHARE_AVAILABLE:
-        print("[WARN] Tushare 不可用，无法获取真实行情数据")
+        print(f"[WARN] Tushare 不可用，无法获取真实行情数据。TUSHARE_AVAILABLE={TUSHARE_AVAILABLE}")
+        # 尝试检查环境变量
+        token_from_env = os.getenv("TUSHARE_TOKEN")
+        print(f"[DEBUG] TUSHARE_TOKEN from env: {'已设置' if token_from_env else '未设置'}")
         return []  # 返回空列表而不是抛异常
     
     try:
@@ -348,7 +356,7 @@ def calc_vol_ratio(data: List[Dict], period=10) -> List[Dict]:
 # 中线选股评分
 # ─────────────────────────────────────────────
 
-def score_stock(code: str, name: str, current_price: float, change_pct: float) -> Optional[Dict]:
+def score_stock_simple(code: str, name: str, current_price: float, change_pct: float) -> Optional[Dict]:
     """对单只股票打分（简化版，不需要历史数据）"""
     # 如果没有历史数据，使用简化评分逻辑
     score = 0
@@ -412,93 +420,110 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float) -
         "position_pct": position_pct
     }
 
-    hist = calc_ma(hist)
-    hist = calc_macd(hist)
-    hist = calc_rsi(hist)
-    hist = calc_vol_ratio(hist)
 
-    last = hist[-1]
-    prev = hist[-2]
+def score_stock(code: str, name: str, current_price: float, change_pct: float) -> Optional[Dict]:
+    """对单只股票打分（完整版，优先使用历史数据，降级到简化版）"""
+    # 尝试获取历史数据进行完整评分
+    try:
+        if not TUSHARE_AVAILABLE:
+            raise RuntimeError("Tushare 不可用")
+        
+        hist = get_hist_data(code, days=60)
+        if not hist or len(hist) < 30:
+            raise RuntimeError(f"历史数据不足: {len(hist) if hist else 0} 条")
 
-    score = 0
-    signals = []
+        hist = calc_ma(hist)
+        hist = calc_macd(hist)
+        hist = calc_rsi(hist)
+        hist = calc_vol_ratio(hist)
 
-    # 1. 均线多头排列
-    if last.get("ma5") and last.get("ma10") and last.get("ma20") and last.get("ma30"):
-        if last["ma5"] > last["ma10"] > last["ma20"] > last["ma30"]:
-            score += 25
-            signals.append("均线多头排列")
+        last = hist[-1]
+        prev = hist[-2]
 
-        if prev.get("ma5") and prev.get("ma20") and prev["ma5"] <= prev["ma20"] and last["ma5"] > last["ma20"]:
-            score += 20
-            signals.append("MA5金叉MA20")
-        elif last["ma5"] > last["ma20"]:
-            score += 10
-            signals.append("MA5在MA20上方")
+        score = 0
+        signals = []
 
-    # 2. MACD
-    if prev.get("dif") and prev.get("dea") and last.get("dif") and last.get("dea"):
-        if prev["dif"] <= prev["dea"] and last["dif"] > last["dea"]:
-            score += 20
-            signals.append("MACD金叉")
-        elif last["macd"] and last["macd"] > 0 and last["dif"] > 0:
-            score += 10
-            signals.append("MACD多头")
+        # 1. 均线多头排列
+        if last.get("ma5") and last.get("ma10") and last.get("ma20") and last.get("ma30"):
+            if last["ma5"] > last["ma10"] > last["ma20"] > last["ma30"]:
+                score += 25
+                signals.append("均线多头排列")
 
-    # 3. RSI
-    rsi = last.get("rsi", 50)
-    if 45 <= rsi <= 65:
-        score += 15
-        signals.append(f"RSI适中({rsi:.1f})")
-    elif 35 <= rsi < 45:
-        score += 8
-        signals.append(f"RSI偏低可建仓({rsi:.1f})")
-    elif rsi > 75:
-        score -= 10
-        signals.append(f"RSI超买({rsi:.1f})")
+            if prev.get("ma5") and prev.get("ma20") and prev["ma5"] <= prev["ma20"] and last["ma5"] > last["ma20"]:
+                score += 20
+                signals.append("MA5金叉MA20")
+            elif last["ma5"] > last["ma20"]:
+                score += 10
+                signals.append("MA5在MA20上方")
 
-    # 4. 量比
-    vol_ratio = last.get("vol_ratio", 1)
-    if 1.5 <= vol_ratio <= 5:
-        score += 15
-        signals.append(f"量比放大({vol_ratio:.1f}x)")
-    elif vol_ratio > 5:
-        score += 5
-        signals.append(f"量比异常({vol_ratio:.1f}x)")
+        # 2. MACD
+        if prev.get("dif") and prev.get("dea") and last.get("dif") and last.get("dea"):
+            if prev["dif"] <= prev["dea"] and last["dif"] > last["dea"]:
+                score += 20
+                signals.append("MACD金叉")
+            elif last["macd"] and last["macd"] > 0 and last["dif"] > 0:
+                score += 10
+                signals.append("MACD多头")
 
-    # 5. 价格在MA20之上
-    if last.get("ma20") and last["close"] > last["ma20"]:
-        score += 5
-        signals.append("价格在MA20上方")
+        # 3. RSI
+        rsi = last.get("rsi", 50)
+        if 45 <= rsi <= 65:
+            score += 15
+            signals.append(f"RSI适中({rsi:.1f})")
+        elif 35 <= rsi < 45:
+            score += 8
+            signals.append(f"RSI偏低可建仓({rsi:.1f})")
+        elif rsi > 75:
+            score -= 10
+            signals.append(f"RSI超买({rsi:.1f})")
 
-    # 止损止盈
-    ma20 = last.get("ma20", current_price * 0.95)
-    buy_price = round(current_price * 1.002, 2)
-    stop_loss = round(ma20 * 0.98, 2)
-    take_profit = round(buy_price * 1.12, 2)
+        # 4. 量比
+        vol_ratio = last.get("vol_ratio", 1)
+        if 1.5 <= vol_ratio <= 5:
+            score += 15
+            signals.append(f"量比放大({vol_ratio:.1f}x)")
+        elif vol_ratio > 5:
+            score += 5
+            signals.append(f"量比异常({vol_ratio:.1f}x)")
 
-    if score >= 70:
-        position_pct = 0.20
-    elif score >= 55:
-        position_pct = 0.15
-    else:
-        position_pct = 0.10
+        # 5. 价格在MA20之上
+        if last.get("ma20") and last["close"] > last["ma20"]:
+            score += 5
+            signals.append("价格在MA20上方")
 
-    return {
-        "code": code,
-        "name": name,
-        "current_price": current_price,
-        "change_pct": change_pct,
-        "score": score,
-        "signals": signals,
-        "buy_price": buy_price,
-        "stop_loss": stop_loss,
-        "take_profit": take_profit,
-        "position_pct": position_pct,
-        "rsi": round(rsi, 1),
-        "macd": round(float(last.get("macd", 0)), 4),
-        "vol_ratio": round(float(vol_ratio), 2),
-    }
+        # 止损止盈
+        ma20 = last.get("ma20", current_price * 0.95)
+        buy_price = round(current_price * 1.002, 2)
+        stop_loss = round(ma20 * 0.98, 2)
+        take_profit = round(buy_price * 1.12, 2)
+
+        if score >= 70:
+            position_pct = 0.20
+        elif score >= 55:
+            position_pct = 0.15
+        else:
+            position_pct = 0.10
+
+        return {
+            "code": code,
+            "name": name,
+            "current_price": current_price,
+            "change_pct": change_pct,
+            "score": score,
+            "signals": signals,
+            "buy_price": buy_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "position_pct": position_pct,
+            "rsi": round(rsi, 1),
+            "macd": round(float(last.get("macd", 0)), 4),
+            "vol_ratio": round(float(vol_ratio), 2),
+        }
+
+    except Exception as e:
+        # 历史数据不可用，降级到简化版
+        print(f"[DEBUG] {code} 历史评分失败，使用简化版: {e}")
+        return score_stock_simple(code, name, current_price, change_pct)
 
 # ─────────────────────────────────────────────
 # 主选股流程
@@ -533,6 +558,7 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
             print(f"[进度] 已分析 {analyzed_count}/{max_analyze} 只股票...")
         
         result = score_stock(stock["code"], stock["name"], stock["current_price"], stock["change_pct"])
+        
         if result and result["score"] >= 50:
             results.append(result)
 
@@ -665,7 +691,7 @@ def execute_sell(user_id: int, code: str, shares: int, price: float) -> Dict:
     return {"success": True, "message": f"成功卖出 {holding['stock_name']}({code}) {shares}股，均价 {price} 元，{profit_str}"}
 
 def get_portfolio_snapshot(user_id: int) -> Dict:
-    """获取用户账户快照"""
+    """获取用户账户快照（带实时价格）"""
     account = database.get_account(user_id)
     holdings = database.get_holdings(user_id)
 
@@ -673,14 +699,39 @@ def get_portfolio_snapshot(user_id: int) -> Dict:
     total_market_value = account["cash"]
     total_cost = 0
 
-    # 获取当前价格（简化版，实际应该批量获取）
+    # 批量获取持仓股票的实时价格
+    real_prices = {}
+    if holdings and TUSHARE_AVAILABLE:
+        try:
+            codes = [h["stock_code"] for h in holdings]
+            df_rt = ts.get_realtime_quotes(codes)
+            if df_rt is not None and not df_rt.empty:
+                for _, row in df_rt.iterrows():
+                    code = str(row['code']).zfill(6)
+                    try:
+                        price = float(str(row['price']).strip())
+                        pre_close = float(str(row['pre_close']).strip())
+                        if price > 0 and pre_close > 0:
+                            real_prices[code] = {
+                                "price": price,
+                                "change_pct": round((price - pre_close) / pre_close * 100, 2)
+                            }
+                    except (ValueError, TypeError):
+                        continue
+        except Exception as e:
+            print(f"[WARN] 获取持仓实时价格失败: {e}")
+
+    # 计算每个持仓的市值和盈亏
     for holding in holdings:
         code = holding["stock_code"]
-        current_price = holding["avg_price"]  # 默认用成本价
-        change_pct = 0
-
-        # 这里可以调用 Tushare 获取实时价格，暂时简化
-        # 实际部署时可以添加定时任务更新持仓价格
+        
+        # 优先使用实时价格
+        if code in real_prices:
+            current_price = real_prices[code]["price"]
+            change_pct = real_prices[code]["change_pct"]
+        else:
+            current_price = holding["avg_price"]  # 降级到成本价
+            change_pct = 0
         
         market_value = holding["shares"] * current_price
         cost_value = holding["shares"] * holding["avg_price"]
