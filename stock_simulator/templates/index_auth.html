@@ -592,7 +592,12 @@
     // 加载推荐股票
     function loadSuggestions() {
       fetch(`${API_BASE}/suggestions`)
-        .then(r => r.json())
+        .then(r => {
+          if (!r.ok) {
+            throw new Error(`API请求失败: ${r.status}`);
+          }
+          return r.json();
+        })
         .then(data => {
           const grid = document.getElementById('stocks-grid');
           grid.innerHTML = '';
@@ -671,7 +676,26 @@
             toast(`推荐已更新 (${time})`, 'success');
           }
         })
-        .catch(() => toast('加载推荐失败', 'error'));
+        .catch(err => {
+          console.error('加载推荐失败:', err);
+          const grid = document.getElementById('stocks-grid');
+          grid.innerHTML = `
+            <div class="no-data-message">
+              <div style="font-size:24px; margin-bottom:12px;">⚠️</div>
+              <div style="font-size:16px; font-weight:600; margin-bottom:8px;">加载推荐失败</div>
+              <div style="color:var(--muted); font-size:14px; margin-bottom:16px;">
+                服务器连接异常，请稍后重试
+              </div>
+              <button class="btn" onclick="loadSuggestions()" style="margin-top:8px;">
+                <span class="icon">🔄</span> 刷新页面
+              </button>
+              <div style="margin-top:16px; font-size:12px; color:var(--muted);">
+                错误信息: ${err.message || '未知错误'}
+              </div>
+            </div>
+          `;
+          toast('加载推荐失败，请检查网络连接', 'error');
+        });
     }
 
     // 加载持仓
@@ -922,6 +946,36 @@
         if (e.target === modal) modal.remove();
       });
       document.body.appendChild(modal);
+    }
+
+    // 手动触发扫描
+    function triggerScan() {
+      if (!authToken) {
+        toast('请先登录', 'error');
+        window.location.href = '/login';
+        return;
+      }
+      
+      toast('开始扫描，请稍候...', 'info');
+      
+      authFetch(`${API_BASE}/scan/trigger`, {
+        method: 'POST'
+      })
+      .then(r => r.json())
+      .then(data => {
+        toast(data.message, data.success ? 'success' : 'error');
+        if (data.success) {
+          // 等待3秒后刷新推荐数据
+          setTimeout(() => {
+            loadSuggestions();
+            updateScanStatus();
+          }, 3000);
+        }
+      })
+      .catch(err => {
+        console.error('扫描触发失败:', err);
+        toast('扫描触发失败，请稍后重试', 'error');
+      });
     }
 
     // 页面加载
