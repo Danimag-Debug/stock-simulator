@@ -365,6 +365,9 @@ def load_suggestions() -> List[Dict]:
     for row in dict_rows(rows):
         row["signals"] = json.loads(row["signals"]) if row["signals"] else []
         row["already_holding"] = bool(row["already_holding"])
+        # 字段名映射：前端使用 code/name，数据库存的是 stock_code/stock_name
+        row["code"] = row.get("stock_code", "")
+        row["name"] = row.get("stock_name", "")
         result.append(row)
     
     return result

@@ -590,32 +590,46 @@
             const alreadyHolding = item.already_holding || false;
             const card = document.createElement('div');
             card.className = 'stock-card';
+            const code = item.code || item.stock_code || '';
+            const name = item.name || item.stock_name || '未知';
+            const curPrice = (item.current_price || 0).toFixed(2);
+            const changePct = item.change_pct || 0;
+            const buyPrice = item.buy_price || item.current_price || 0;
+            const stopLoss = item.stop_loss || 0;
+            const takeProfit = item.take_profit || 0;
+            const signals = Array.isArray(item.signals) ? item.signals : [];
+
             card.innerHTML = `
               <div class="stock-header">
                 <div>
-                  <div class="stock-name">${item.name}</div>
-                  <div class="stock-code">${item.code}</div>
+                  <div class="stock-name">${name}</div>
+                  <div class="stock-code">${code}</div>
                 </div>
                 <div>
-                  <div class="stock-price">¥${item.current_price.toFixed(2)}</div>
-                  <div class="stock-change ${item.change_pct >= 0 ? 'positive' : 'negative'}">
-                    ${item.change_pct >= 0 ? '+' : ''}${item.change_pct.toFixed(2)}%
+                  <div class="stock-price">¥${curPrice}</div>
+                  <div class="stock-change ${changePct >= 0 ? 'positive' : 'negative'}">
+                    ${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%
                   </div>
                 </div>
               </div>
               <div class="stock-meta">
-                <span>评分: ${item.score}</span>
-                <span>RSI: ${item.rsi || '--'}</span>
+                <span>评分: ${item.score || '--'}</span>
+                <span>RSI: ${item.rsi ? item.rsi.toFixed(1) : '--'}</span>
                 <span>量比: ${item.vol_ratio ? item.vol_ratio.toFixed(1) + 'x' : '--'}</span>
               </div>
+              <div class="stock-meta" style="margin-top:4px;">
+                <span>买入价: ¥${buyPrice.toFixed(2)}</span>
+                <span>止损: ¥${stopLoss.toFixed(2)}</span>
+                <span>目标: ¥${takeProfit.toFixed(2)}</span>
+              </div>
               <div class="stock-tags">
-                ${item.signals.map(signal => `<span class="tag">${signal}</span>`).join('')}
+                ${signals.map(signal => `<span class="tag">${signal}</span>`).join('')}
               </div>
               <div class="stock-actions">
-                <button class="btn" onclick="doBuy('${item.code}', '${item.name}', ${item.suggested_shares}, ${item.buy_price})">
+                <button class="btn" onclick="doBuy('${code}', '${name}', ${item.suggested_shares || 100}, ${buyPrice})">
                   ${alreadyHolding ? '加仓' : '买入'}
                 </button>
-                <button class="btn btn-secondary" onclick="showStockDetail('${item.code}')">详情</button>
+                <button class="btn btn-secondary" onclick="showStockDetail('${code}', ${JSON.stringify({name, curPrice, buyPrice, stopLoss, takeProfit, signals, score: item.score}).replace(/'/g, '&#39;')})">详情</button>
               </div>
             `;
             grid.appendChild(card);
@@ -799,8 +813,76 @@
     }
 
     // 股票详情（暂时简单实现）
-    function showStockDetail(code) {
-      toast(`查看 ${code} 详情（功能开发中）`, 'info');
+    function showStockDetail(code, info) {
+      if (!info) {
+        toast(`暂无详情数据`, 'error');
+        return;
+      }
+      // 创建弹窗
+      const existing = document.getElementById('stock-detail-modal');
+      if (existing) existing.remove();
+
+      const modal = document.createElement('div');
+      modal.id = 'stock-detail-modal';
+      modal.style.cssText = `
+        position:fixed; top:0; left:0; right:0; bottom:0;
+        background:rgba(0,0,0,0.7); z-index:1000;
+        display:flex; align-items:center; justify-content:center; padding:20px;
+      `;
+      modal.innerHTML = `
+        <div style="background:var(--card); border:1px solid var(--border); border-radius:16px; padding:28px; max-width:420px; width:100%;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <div>
+              <div style="font-size:18px; font-weight:700;">${info.name}</div>
+              <div style="color:var(--muted); font-size:13px; margin-top:2px;">${code}</div>
+            </div>
+            <button onclick="document.getElementById('stock-detail-modal').remove()"
+              style="background:var(--border); border:none; color:var(--text); padding:6px 12px; border-radius:8px; cursor:pointer; font-size:13px;">
+              关闭
+            </button>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+            <div style="background:var(--bg); border-radius:10px; padding:14px;">
+              <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">当前价格</div>
+              <div style="font-size:20px; font-weight:700;">¥${info.curPrice}</div>
+            </div>
+            <div style="background:var(--bg); border-radius:10px; padding:14px;">
+              <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">综合评分</div>
+              <div style="font-size:20px; font-weight:700; color:var(--accent);">${info.score} 分</div>
+            </div>
+            <div style="background:rgba(42,157,143,0.1); border:1px solid rgba(42,157,143,0.3); border-radius:10px; padding:14px;">
+              <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">推荐买入价</div>
+              <div style="font-size:18px; font-weight:700; color:var(--green);">¥${info.buyPrice.toFixed(2)}</div>
+            </div>
+            <div style="background:rgba(230,57,70,0.1); border:1px solid rgba(230,57,70,0.3); border-radius:10px; padding:14px;">
+              <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">止损价</div>
+              <div style="font-size:18px; font-weight:700; color:var(--red);">¥${info.stopLoss.toFixed(2)}</div>
+            </div>
+          </div>
+          <div style="background:rgba(247,146,57,0.1); border:1px solid rgba(247,146,57,0.3); border-radius:10px; padding:14px; margin-bottom:16px;">
+            <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">目标价（盈利目标）</div>
+            <div style="font-size:20px; font-weight:700; color:var(--accent);">¥${info.takeProfit.toFixed(2)}</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">
+              预期涨幅：+${(((info.takeProfit - info.buyPrice) / info.buyPrice) * 100).toFixed(1)}%
+              &nbsp;|&nbsp;
+              最大回撤：-${(((info.buyPrice - info.stopLoss) / info.buyPrice) * 100).toFixed(1)}%
+            </div>
+          </div>
+          <div style="margin-bottom:16px;">
+            <div style="color:var(--muted); font-size:12px; margin-bottom:8px;">信号指标</div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+              ${(info.signals || []).map(s => `<span style="background:#21262d; border:1px solid var(--border); border-radius:20px; padding:4px 10px; font-size:12px;">${s}</span>`).join('')}
+            </div>
+          </div>
+          <div style="font-size:11px; color:var(--muted); text-align:center; border-top:1px solid var(--border); padding-top:12px;">
+            ⚠️ 以上数据仅供学习参考，不构成投资建议
+          </div>
+        </div>
+      `;
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+      document.body.appendChild(modal);
     }
 
     // 页面加载
