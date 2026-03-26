@@ -327,15 +327,34 @@ def trigger_scan():
 @app.route("/api/health", methods=["GET"])
 def health():
     """健康检查"""
-    return jsonify({"status": "ok", "time": datetime.datetime.now().isoformat()})
+    # 最简单的健康检查，确保服务正常
+    return jsonify({"status": "ok", "service": "stock-simulator", "timestamp": datetime.datetime.now().isoformat()}), 200
+
+# 系统初始化状态
+_system_initialized = False
+
+def initialize_system():
+    """初始化系统（惰性初始化）"""
+    global _system_initialized
+    if not _system_initialized:
+        print("[系统] 正在初始化...")
+        try:
+            init_system()
+            _system_initialized = True
+            print("[系统] 初始化完成")
+        except Exception as e:
+            print(f"[系统] 初始化失败: {e}")
+
+# 在第一个请求前初始化
+@app.before_request
+def before_request():
+    """在每个请求前检查并初始化系统"""
+    initialize_system()
 
 # ─────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("初始化系统...")
-    init_system()
-    
     print("启动多用户股票模拟服务器，端口 5001...")
     app.run(host="0.0.0.0", port=5001, debug=False)

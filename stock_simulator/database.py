@@ -11,11 +11,20 @@ from typing import List, Dict, Optional
 import hashlib
 import secrets
 
-DATABASE_PATH = os.path.join(os.path.dirname(__file__), "data", "stock_simulator.db")
+# 数据库路径 - Railway 使用持久化卷
+# 优先使用环境变量指定的路径，否则使用当前目录
+if os.getenv("RAILWAY_VOLUME_MOUNT_PATH"):
+    # Railway 持久化卷路径
+    DB_DIR = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH"), "data")
+else:
+    # 本地开发路径
+    DB_DIR = os.path.join(os.path.dirname(__file__), "data")
+
+DATABASE_PATH = os.path.join(DB_DIR, "stock_simulator.db")
 
 def get_db():
     """获取数据库连接"""
-    os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
+    os.makedirs(DB_DIR, exist_ok=True)
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row  # 返回字典形式的结果
     return conn

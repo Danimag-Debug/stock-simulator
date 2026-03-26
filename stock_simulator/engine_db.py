@@ -7,24 +7,38 @@ import os
 import random
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-import database
+try:
+    import database
+except ImportError:
+    from . import database
 
 # 尝试加载 Tushare
 TUSHARE_AVAILABLE = False
 try:
     import tushare as ts
-    try:
-        from .tushare_config import TUSHARE_TOKEN
-        if TUSHARE_TOKEN and TUSHARE_TOKEN != "你的Tushare Token粘贴在这里":
-            ts.set_token(TUSHARE_TOKEN)
-            TUSHARE_AVAILABLE = True
-            print("[INFO] Tushare 已启用，使用真实行情数据")
-        else:
-            print("[WARN] Tushare Token 未配置，使用模拟数据")
-    except ImportError:
-        print("[WARN] 未找到 tushare_config.py，使用模拟数据")
+    import os
+    
+    # 优先从环境变量读取 Tushare Token
+    token_from_env = os.getenv("TUSHARE_TOKEN")
+    
+    if token_from_env and token_from_env.strip():
+        ts.set_token(token_from_env)
+        TUSHARE_AVAILABLE = True
+        print("[INFO] Tushare 已启用（环境变量），使用真实行情数据")
+    else:
+        # 尝试从配置文件读取
+        try:
+            from .tushare_config import TUSHARE_TOKEN
+            if TUSHARE_TOKEN and TUSHARE_TOKEN != "你的Tushare Token粘贴在这里":
+                ts.set_token(TUSHARE_TOKEN)
+                TUSHARE_AVAILABLE = True
+                print("[INFO] Tushare 已启用（配置文件），使用真实行情数据")
+            else:
+                print("[WARN] Tushare Token 未配置，无法获取真实行情数据")
+        except ImportError:
+            print("[WARN] 未找到 tushare_config.py，无法获取真实行情数据")
 except ImportError:
-    print("[WARN] 未安装 tushare，使用模拟数据")
+    print("[WARN] 未安装 tushare，无法获取真实行情数据")
 
 # 模拟股票池（降级用）- 包含真实参考价格
 # 详细的高质量模拟股票数据（包含真实参考价格）
@@ -208,6 +222,9 @@ def get_stock_list() -> List[Dict]:
         result.sort(key=lambda x: x["change_pct"], reverse=True)
         print(f"[INFO] 全市场筛选完成，共 {len(result)} 只候选股票")
         return result
+    except Exception as e:
+        print(f"[ERROR] 获取股票列表失败: {e}")
+        return []
 
 def get_stock_name_tushare(code: str) -> Optional[str]:
     """通过 Tushare 获取股票名称"""
