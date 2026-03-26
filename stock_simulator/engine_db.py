@@ -26,22 +26,44 @@ try:
 except ImportError:
     print("[WARN] 未安装 tushare，使用模拟数据")
 
-# 模拟股票池（降级用）
+# 模拟股票池（降级用）- 包含真实参考价格
 MOCK_STOCKS = [
-    ("600519", "贵州茅台"), ("300750", "宁德时代"), ("601318", "中国平安"),
-    ("600030", "中信证券"), ("300059", "东方财富"), ("603259", "药明康德"),
-    ("000858", "五粮液"), ("002475", "立讯精密"), ("601888", "中国中免"),
-    ("300760", "迈瑞医疗"), ("600887", "伊利股份"), ("000333", "美的集团"),
-    ("002594", "比亚迪"), ("601012", "隆基绿能"), ("300124", "汇川技术"),
-    ("600690", "海尔智家"), ("002271", "东方雨虹"), ("603986", "兆易创新"),
-    ("688981", "中芯国际"), ("002142", "宁波银行"), ("000651", "格力电器"),
-    ("000725", "京东方A"), ("600276", "恒瑞医药"), ("002415", "海康威视"),
-    ("300142", "沃森生物"), ("600009", "上海机场"), ("002601", "龙佰集团"),
-    ("300274", "阳光电源"), ("600036", "招商银行"), ("002032", "苏泊尔"),
-    ("601166", "兴业银行"), ("600031", "三一重工"), ("000568", "泸州老窖"),
+    ("600519", "贵州茅台", 1850.0),
+    ("300750", "宁德时代", 210.0),
+    ("601318", "中国平安", 57.8),
+    ("600030", "中信证券", 24.5),
+    ("300059", "东方财富", 15.2),
+    ("603259", "药明康德", 45.6),
+    ("000858", "五粮液", 148.0),
+    ("002475", "立讯精密", 32.8),
+    ("601888", "中国中免", 78.5),
+    ("300760", "迈瑞医疗", 280.0),
+    ("600887", "伊利股份", 28.3),
+    ("000333", "美的集团", 68.9),
+    ("002594", "比亚迪", 245.0),
+    ("601012", "隆基绿能", 18.7),
+    ("300124", "汇川技术", 65.4),
+    ("600690", "海尔智家", 26.8),
+    ("002271", "东方雨虹", 18.2),
+    ("603986", "兆易创新", 78.9),
+    ("688981", "中芯国际", 45.6),
+    ("002142", "宁波银行", 22.3),
+    ("000651", "格力电器", 38.7),
+    ("000725", "京东方A", 4.2),
+    ("600276", "恒瑞医药", 42.8),
+    ("002415", "海康威视", 34.5),
+    ("300142", "沃森生物", 28.9),
+    ("600009", "上海机场", 36.7),
+    ("002601", "龙佰集团", 19.8),
+    ("300274", "阳光电源", 85.6),
+    ("600036", "招商银行", 33.2),
+    ("002032", "苏泊尔", 52.4),
+    ("601166", "兴业银行", 16.8),
+    ("600031", "三一重工", 14.5),
+    ("000568", "泸州老窖", 189.0),
 ]
 
-INITIAL_CASH = 10000.0
+INITIAL_CASH = 150000.0  # 调整为15万元
 
 # ─────────────────────────────────────────────
 # 行情获取（真实 + 模拟双支持）
@@ -161,11 +183,13 @@ def get_stock_list() -> List[Dict]:
     # 降级：使用内置股票池
     print("[WARN] Tushare 不可用，使用内置模拟数据")
     result = []
-    for code, name in MOCK_STOCKS:
-        base_price = random.uniform(15, 150)
-        change_pct = random.uniform(-5, 8)
+    for stock in MOCK_STOCKS:
+        code, name, base_price = stock
+        # 在真实价格基础上添加小幅波动
+        change_pct = random.uniform(-3, 5)
         current_price = round(base_price * (1 + change_pct / 100), 2)
-        amount = random.uniform(1, 50) * 1e8
+        # 根据价格计算合理的成交额
+        amount = base_price * random.uniform(0.5, 3) * 1e8
         volume = int(amount / current_price)
         result.append({
             "code": code, "name": name,
@@ -187,7 +211,7 @@ def get_stock_name_tushare(code: str) -> Optional[str]:
         pass
 
     # 本地映射
-    for c, name in MOCK_STOCKS:
+    for c, name, _ in MOCK_STOCKS:
         if c == code:
             return name
     return None
@@ -428,11 +452,20 @@ def run_stock_scan(top_n: int = 5) -> List[Dict]:
         print("[WARN] 无法获取股票列表")
         return []
 
-    # 取候选股：涨幅居前的300只进行技术分析
-    candidates = stock_list[:500] if len(stock_list) >= 500 else stock_list
+    # 取候选股：优先选取涨幅居前的股票，扩大扫描范围
+    # 如果股票数量足够，取更多候选进行更全面的分析
+    candidates_limit = min(len(stock_list), 800)  # 最多扫描800只股票
+    candidates = stock_list[:candidates_limit]
+    
+    # 随机打乱以避免每次都扫描相同的股票
     import random as _random
-    if len(candidates) > 300:
-        candidates = _random.sample(candidates, 300)
+    _random.shuffle(candidates)
+    
+    # 但确保一些涨幅好的股票在候选池中
+    top_gainers = sorted(stock_list, key=lambda x: x["change_pct"], reverse=True)[:100]
+    for stock in top_gainers:
+        if stock not in candidates[:600]:  # 确保在候选池前半部分
+            candidates.insert(0, stock)
 
     results = []
     for stock in candidates:
@@ -449,8 +482,8 @@ def run_stock_scan(top_n: int = 5) -> List[Dict]:
     # 这里我们使用默认资金计算，上线后每个用户会看到不同股数
     suggestions = []
     for r in top:
-        # 默认使用 10000 元资金计算
-        account_value = 10000.0
+        # 默认使用 150000 元资金计算（15万元）
+        account_value = 150000.0
         shares = int(account_value * r["position_pct"] / r["buy_price"] // 100 * 100)
         shares = max(shares, 100)
         cost = shares * r["buy_price"]

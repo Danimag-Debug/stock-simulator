@@ -40,8 +40,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
-        cash REAL DEFAULT 10000.0,
-        initial_cash REAL DEFAULT 10000.0,
+        cash REAL DEFAULT 150000.0,
+        initial_cash REAL DEFAULT 150000.0,
         total_profit REAL DEFAULT 0.0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE

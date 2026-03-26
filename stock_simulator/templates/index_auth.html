@@ -629,7 +629,7 @@
                 <button class="btn" onclick="doBuy('${code}', '${name}', ${item.suggested_shares || 100}, ${buyPrice})">
                   ${alreadyHolding ? '加仓' : '买入'}
                 </button>
-                <button class="btn btn-secondary" onclick="showStockDetail('${code}', ${JSON.stringify({name, curPrice, buyPrice, stopLoss, takeProfit, signals, score: item.score}).replace(/'/g, '&#39;')})">详情</button>
+                <button class="btn btn-secondary" onclick="showStockDetail('${code}', '${JSON.stringify({name, curPrice, buyPrice, stopLoss, takeProfit, signals, score: item.score}).replace(/'/g, "\\'")}')">详情</button>
               </div>
             `;
             grid.appendChild(card);
@@ -813,9 +813,17 @@
     }
 
     // 股票详情（暂时简单实现）
-    function showStockDetail(code, info) {
-      if (!info) {
+    function showStockDetail(code, infoJson) {
+      if (!infoJson) {
         toast(`暂无详情数据`, 'error');
+        return;
+      }
+      let info;
+      try {
+        info = JSON.parse(infoJson);
+      } catch (e) {
+        console.error('解析详情数据失败:', e, infoJson);
+        toast('解析详情数据失败', 'error');
         return;
       }
       // 创建弹窗
