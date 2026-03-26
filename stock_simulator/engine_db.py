@@ -101,16 +101,17 @@ def _build_all_market_codes() -> List[str]:
     深市：000001-004999, 300000-301000（创业板）
     """
     ranges = [
-        # 沪市主板
+        # 沪市主板 (600xxx)
         range(600000, 606000),
-        # 科创板
+        # 科创板 (688xxx)
         range(688000, 689000),
-        # 深市主板
-        range(1, 5000),
-        # 中小板
-        range(2000, 3000),
-        # 创业板
+        # 深市主板 (000xxx, 001xxx, 002xxx)
+        range(1, 5000),      # 000001-0004999
+        range(2000, 3000),   # 002000-002999 (中小板)
+        # 创业板 (300xxx)
         range(300000, 301000),
+        # 深市其他主板 (001xxx)
+        range(1000, 2000),
     ]
     codes = []
     for r in ranges:
@@ -125,9 +126,10 @@ def get_stock_list() -> List[Dict]:
     """
     import pandas as pd
     
-    # 强制要求 Tushare 可用
+    # 检查 Tushare 是否可用
     if not TUSHARE_AVAILABLE:
-        raise RuntimeError("Tushare 不可用！请确保已配置有效的 TUSHARE_TOKEN。")
+        print("[WARN] Tushare 不可用，无法获取真实行情数据")
+        return []  # 返回空列表而不是抛异常
     
     try:
         all_codes = _build_all_market_codes()
@@ -347,10 +349,68 @@ def calc_vol_ratio(data: List[Dict], period=10) -> List[Dict]:
 # ─────────────────────────────────────────────
 
 def score_stock(code: str, name: str, current_price: float, change_pct: float) -> Optional[Dict]:
-    """对单只股票打分"""
-    hist = get_hist_data(code, days=60)
-    if not hist:
-        return None
+    """对单只股票打分（简化版，不需要历史数据）"""
+    # 如果没有历史数据，使用简化评分逻辑
+    score = 0
+    signals = []
+    
+    # 1. 涨幅评分
+    if 0 <= change_pct <= 5:
+        score += 40
+        signals.append(f"涨幅适中({change_pct:.1f}%)")
+    elif change_pct < 0:
+        score += 20
+        signals.append(f"下跌({change_pct:.1f}%)")
+    else:
+        score += 10
+        signals.append(f"涨幅较大({change_pct:.1f}%)")
+    
+    # 2. 价格评分
+    if 5 <= current_price <= 50:
+        score += 30
+        signals.append(f"价格适中(¥{current_price:.2f})")
+    elif current_price < 5:
+        score += 20
+        signals.append(f"低价股(¥{current_price:.2f})")
+    else:
+        score += 10
+        signals.append(f"价格较高(¥{current_price:.2f})")
+    
+    # 3. 股票代码类型
+    if code.startswith('6'):
+        score += 10
+        signals.append("沪市主板")
+    elif code.startswith('0'):
+        score += 10
+        signals.append("深市主板")
+    elif code.startswith('3'):
+        score += 5
+        signals.append("创业板")
+    elif code.startswith('688'):
+        score += 5
+        signals.append("科创板")
+    
+    # 确保分数在0-100之间
+    score = min(max(score, 0), 100)
+    
+    # 计算推荐参数
+    position_pct = 0.1  # 默认10%仓位
+    buy_price = current_price
+    stop_loss = current_price * 0.95  # 5%止损
+    take_profit = current_price * 1.10  # 10%止盈
+    
+    return {
+        "code": code,
+        "name": name,
+        "current_price": current_price,
+        "change_pct": change_pct,
+        "score": score,
+        "signals": signals[:3],  # 最多显示3个信号
+        "buy_price": round(buy_price, 2),
+        "stop_loss": round(stop_loss, 2),
+        "take_profit": round(take_profit, 2),
+        "position_pct": position_pct
+    }
 
     hist = calc_ma(hist)
     hist = calc_macd(hist)

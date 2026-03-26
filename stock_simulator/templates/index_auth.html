@@ -660,7 +660,7 @@
                 <button class="btn" onclick="doBuy('${code}', '${name}', ${item.suggested_shares || 100}, ${buyPrice})">
                   ${alreadyHolding ? '加仓' : '买入'}
                 </button>
-                <button class="btn btn-secondary" onclick="showStockDetail('${code}', '${JSON.stringify({name, curPrice, buyPrice, stopLoss, takeProfit, signals, score: item.score}).replace(/'/g, "\\'")}')">详情</button>
+                <button class="btn btn-secondary" onclick="showStockDetail('${code}', '${JSON.stringify({name: name, curPrice: curPrice, buyPrice: buyPrice, stopLoss: stopLoss, takeProfit: takeProfit, signals: signals, score: item.score}).replace(/'/g, "\\'")}')">详情</button>
               </div>
             `;
             grid.appendChild(card);

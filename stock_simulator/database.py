@@ -155,10 +155,10 @@ def create_user(username: str, password: str) -> Optional[int]:
         )
         user_id = cursor.lastrowid
         
-        # 创建对应的账户
+        # 创建对应的账户（使用15万元初始资金）
         cursor.execute(
-            "INSERT INTO accounts (user_id) VALUES (?)",
-            (user_id,)
+            "INSERT INTO accounts (user_id, cash, initial_cash) VALUES (?, ?, ?)",
+            (user_id, 150000.0, 150000.0)
         )
         
         conn.commit()
@@ -197,12 +197,12 @@ def get_account(user_id: int) -> Dict:
     if row:
         return dict(row)
     
-    # 如果账户不存在，创建新账户
+    # 如果账户不存在，创建新账户（使用15万元初始资金）
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO accounts (user_id) VALUES (?)",
-        (user_id,)
+        "INSERT INTO accounts (user_id, cash, initial_cash) VALUES (?, ?, ?)",
+        (user_id, 150000.0, 150000.0)
     )
     conn.commit()
     conn.close()
