@@ -107,14 +107,13 @@ def _build_all_market_codes() -> List[str]:
 
 def get_stock_list() -> List[Dict]:
     """
-    获取全市场实时行情（优先真实数据，失败时返回空列表）
+    获取全市场实时行情（强制使用真实数据）
     """
     import pandas as pd
     
-    # 检查 Tushare 是否可用
+    # 强制要求 Tushare 可用
     if not TUSHARE_AVAILABLE:
-        print("[ERROR] Tushare 不可用！无法获取真实行情数据。")
-        return []
+        raise RuntimeError("Tushare 不可用！请确保已配置有效的 TUSHARE_TOKEN。")
     
     try:
         all_codes = _build_all_market_codes()
@@ -152,9 +151,8 @@ def get_stock_list() -> List[Dict]:
                 print(f"[WARN] 批次 {batch_num}/{total_batches} 失败: {e}")
 
         if not all_quotes:
-            print(f"[ERROR] 全市场实时行情拉取全部失败！{success_batches} 成功/{failed_batches} 失败")
-            return []
-
+            raise RuntimeError(f"全市场实时行情拉取全部失败！{success_batches} 成功/{failed_batches} 失败")
+        
         df_all = pd.concat(all_quotes, ignore_index=True)
         print(f"[INFO] 获取到原始行情 {len(df_all)} 条（{success_batches}/{total_batches} 批次成功）")
 
@@ -229,11 +227,10 @@ def get_stock_name_tushare(code: str) -> Optional[str]:
     return None
 
 def get_hist_data(code: str, days: int = 60) -> Optional[List[Dict]]:
-    """获取历史日线数据（优先真实数据，失败时返回None）"""
+    """获取历史日线数据（强制使用真实数据）"""
     
     if not TUSHARE_AVAILABLE:
-        print(f"[ERROR] Tushare 不可用，无法获取股票 {code} 历史数据！")
-        return None
+        raise RuntimeError("Tushare 不可用，无法获取历史数据！")
 
     try:
         pro = ts.pro_api()
@@ -261,7 +258,7 @@ def get_hist_data(code: str, days: int = 60) -> Optional[List[Dict]]:
         return result
     except Exception as e:
         print(f"[ERROR] Tushare 获取 {code} 历史数据失败: {e}")
-        return None
+        raise RuntimeError(f"获取股票 {code} 历史数据失败: {e}")
 
 # ─────────────────────────────────────────────
 # 技术指标计算
@@ -436,24 +433,12 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
 
     stock_list = get_stock_list()
     if not stock_list:
-        print("[WARN] 无法获取真实行情数据，使用高质量模拟数据")
-        # 生成高质量的模拟数据
-        candidates = []
-        for code, name, base_price in MOCK_STOCK_DETAILS:
-            change_pct = random.uniform(-2, 5)
-            current_price = round(base_price * (1 + change_pct / 100), 2)
-            amount = base_price * random.uniform(0.8, 2.5) * 1e8
-            volume = int(amount / current_price)
-            candidates.append({
-                "code": code, "name": name,
-                "current_price": current_price, "change_pct": round(change_pct, 2),
-                "volume": volume, "amount": amount
-            })
-        print(f"[INFO] 生成 {len(candidates)} 只模拟股票数据")
-    else:
-        # 使用全市场所有股票进行分析
-        candidates = stock_list
-        print(f"[INFO] 对全部 {len(candidates)} 只股票进行技术分析...")
+        print("[ERROR] 无法获取真实行情数据")
+        return []
+
+    # 使用全市场所有股票进行分析
+    candidates = stock_list
+    print(f"[INFO] 对全部 {len(candidates)} 只股票进行技术分析...")
     
     # 按涨幅排序，优先分析涨幅较好的股票
     candidates.sort(key=lambda x: x["change_pct"], reverse=True)

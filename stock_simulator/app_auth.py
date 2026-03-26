@@ -202,8 +202,16 @@ def check_token():
 @app.route("/api/suggestions")
 def get_suggestions():
     """获取推荐股票（全局数据）"""
-    data = load_suggestions()
-    return jsonify(data)
+    try:
+        data = load_suggestions()
+        return jsonify(data)
+    except Exception as e:
+        # 如果真实数据获取失败，返回空数据
+        print(f"[ERROR] 获取推荐数据失败: {e}")
+        return jsonify({
+            "updated_at": None,
+            "items": []
+        })
 
 @app.route("/api/scan/status")
 def scan_status_api():
@@ -305,6 +313,10 @@ def trigger_scan():
         scan_status["running"] = True
         try:
             run_stock_scan(top_n=9)
+        except Exception as e:
+            print(f"[ERROR] 扫描失败: {e}")
+            # 记录扫描失败状态
+            scan_status["last_error"] = str(e)
         finally:
             scan_status["running"] = False
 

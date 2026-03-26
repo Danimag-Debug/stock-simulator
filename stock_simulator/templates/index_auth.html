@@ -276,6 +276,17 @@
     justify-content: center;
   }
 
+  .no-data-message {
+    text-align: center;
+    padding: 60px 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin: 40px auto;
+    max-width: 500px;
+    width: 100%;
+  }
+
   /* 响应式 */
   @media (max-width: 1200px) {
     .summary-grid { grid-template-columns: repeat(2, 1fr); }
@@ -585,6 +596,26 @@
         .then(data => {
           const grid = document.getElementById('stocks-grid');
           grid.innerHTML = '';
+          
+          if (!data.items || data.items.length === 0) {
+            // 没有推荐数据时显示提示
+            grid.innerHTML = `
+              <div class="no-data-message">
+                <div style="font-size:24px; margin-bottom:12px;">📈</div>
+                <div style="font-size:16px; font-weight:600; margin-bottom:8px;">暂无股票推荐</div>
+                <div style="color:var(--muted); font-size:14px; margin-bottom:16px;">
+                  点击"手动扫描"按钮获取最新推荐
+                </div>
+                <button class="btn" onclick="triggerScan()" style="margin-top:8px;">
+                  <span class="icon">🔍</span> 手动扫描
+                </button>
+                <div style="margin-top:16px; font-size:12px; color:var(--muted);">
+                  提示：首次扫描可能需要1-3分钟，请耐心等待
+                </div>
+              </div>
+            `;
+            return;
+          }
           
           data.items.forEach((item, idx) => {
             const alreadyHolding = item.already_holding || false;
