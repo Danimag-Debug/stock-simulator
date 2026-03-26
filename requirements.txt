@@ -3,6 +3,7 @@ Flask-CORS==4.0.0
 APScheduler==3.10.4
 PyJWT==2.8.0
 tushare==1.2.89
-pandas==2.0.3
-numpy==1.24.3
+pandas==2.2.2
+numpy==1.26.4
 gunicorn==21.2.0
+setuptools>=65.0.0
