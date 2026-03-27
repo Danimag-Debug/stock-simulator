@@ -328,15 +328,26 @@ def get_trade_logs(user_id: int, limit: int = 200) -> List[Dict]:
 
 # 推荐管理
 def save_suggestions(suggestions: List[Dict]):
-    """保存推荐列表（覆盖旧的）"""
+    """保存推荐列表（覆盖旧的，去重保证唯一性）"""
     conn = get_db()
     cursor = conn.cursor()
     
     # 清空旧推荐
     cursor.execute("DELETE FROM suggestions")
     
-    # 插入新推荐
+    # 先去重：同一只股票只保留第一条（按评分排序后的顺序）
+    seen_codes = set()
+    deduped = []
     for s in suggestions:
+        code = s.get("code") or s.get("stock_code", "")
+        if code and code not in seen_codes:
+            seen_codes.add(code)
+            deduped.append(s)
+    
+    print(f"[INFO] save_suggestions: {len(suggestions)} -> {len(deduped)} (去重)")
+    
+    # 插入去重后的推荐
+    for s in deduped:
         signals_json = json.dumps(s.get("signals", []), ensure_ascii=False)
         
         cursor.execute("""

@@ -203,10 +203,16 @@ def get_stock_list() -> List[Dict]:
 
                 change_pct = round((current_price - pre_close) / pre_close * 100, 2)
 
+                open_str = str(row.get('open', '0')).strip()
+                high_str = str(row.get('high', '0')).strip()
+                low_str = str(row.get('low', '0')).strip()
                 volume_str = str(row.get('volume', '0')).strip()
                 amount_str = str(row.get('amount', '0')).strip()
                 volume = int(float(volume_str)) if volume_str else 0
                 amount = float(amount_str) if amount_str else 0
+                open_price = float(open_str) if open_str and float(open_str) > 0 else None
+                high_price = float(high_str) if high_str and float(high_str) > 0 else None
+                low_price = float(low_str) if low_str and float(low_str) > 0 else None
 
                 # ── 筛选条件（针对中线策略）──
                 if not (-2 <= change_pct <= 8):      # 排除异常涨跌
@@ -222,7 +228,10 @@ def get_stock_list() -> List[Dict]:
                     "current_price": current_price,
                     "change_pct": change_pct,
                     "volume": volume,
-                    "amount": amount
+                    "amount": amount,
+                    "open_price": open_price,
+                    "high_price": high_price,
+                    "low_price": low_price,
                 })
             except (ValueError, TypeError):
                 continue
@@ -356,56 +365,109 @@ def calc_vol_ratio(data: List[Dict], period=10) -> List[Dict]:
 # 中线选股评分
 # ─────────────────────────────────────────────
 
-def score_stock_simple(code: str, name: str, current_price: float, change_pct: float) -> Optional[Dict]:
-    """对单只股票打分（简化版，不需要历史数据）"""
-    # 如果没有历史数据，使用简化评分逻辑
+def score_stock_simple(code: str, name: str, current_price: float, change_pct: float, 
+                       volume: int = 0, amount: float = 0, open_price: float = None,
+                       high_price: float = None, low_price: float = None) -> Optional[Dict]:
+    """
+    对单只股票打分（简化版，基于实时行情多维度评分）
+    包括：涨幅、量价、K线形态、价格位置
+    """
     score = 0
     signals = []
     
-    # 1. 涨幅评分
-    if 0 <= change_pct <= 5:
+    # 1. 涨幅评分（+40）
+    if 0 <= change_pct <= 3:
         score += 40
+        signals.append(f"涨幅温和({change_pct:.1f}%)")
+    elif 3 < change_pct <= 5:
+        score += 35
         signals.append(f"涨幅适中({change_pct:.1f}%)")
-    elif change_pct < 0:
-        score += 20
-        signals.append(f"下跌({change_pct:.1f}%)")
-    else:
-        score += 10
+    elif 5 < change_pct <= 8:
+        score += 25
         signals.append(f"涨幅较大({change_pct:.1f}%)")
-    
-    # 2. 价格评分
-    if 5 <= current_price <= 50:
-        score += 30
-        signals.append(f"价格适中(¥{current_price:.2f})")
-    elif current_price < 5:
-        score += 20
-        signals.append(f"低价股(¥{current_price:.2f})")
+    elif change_pct < 0:
+        score += 30  # 下跌反而可能是机会
+        signals.append(f"回调({change_pct:.1f}%)")
     else:
-        score += 10
-        signals.append(f"价格较高(¥{current_price:.2f})")
+        score += 15
+        signals.append(f"涨停附近({change_pct:.1f}%)")
     
-    # 3. 股票代码类型
-    if code.startswith('6'):
+    # 2. 价格位置评分（+30）- 基于开盘价/最高价/最低价
+    if open_price and high_price and low_price and high_price > low_price:
+        price_range = high_price - low_price
+        if price_range > 0:
+            position = (current_price - low_price) / price_range  # 0=最低，1=最高
+            if 0.3 <= position <= 0.7:  # 中间位置，有上升空间又有下跌保护
+                score += 30
+                signals.append(f"K线中轨({position*100:.0f}%)")
+            elif 0.2 <= position < 0.3:  # 接近下轨，可能反弹
+                score += 25
+                signals.append(f"K线下轨({position*100:.0f}%)")
+            elif 0.7 < position <= 0.8:  # 接近上轨，但还没到顶
+                score += 20
+                signals.append(f"K线上轨({position*100:.0f}%)")
+            elif position > 0.8:  # 非常接近最高
+                score += 5
+                signals.append(f"接近高点({position*100:.0f}%)")
+            else:
+                score += 15
+                signals.append(f"低位({position*100:.0f}%)")
+    else:
+        # 无日内高低数据时使用价格区间简化评分
+        if 5 <= current_price <= 50:
+            score += 30
+            signals.append(f"价格适中(¥{current_price:.2f})")
+        elif current_price < 5:
+            score += 25
+            signals.append(f"低价区(¥{current_price:.2f})")
+        else:
+            score += 15
+            signals.append(f"高价区(¥{current_price:.2f})")
+    
+    # 3. 量能评分（+20）- 基于成交额和换手率
+    if amount > 0 and current_price > 0:
+        # 简单估计换手率（成交额/流通市值，假设市盈率20倍）
+        estimated_vol = (amount / current_price / 1e8) * 100 if current_price > 0 else 0
+        if 1 <= estimated_vol <= 5:  # 量能适中
+            score += 20
+            signals.append(f"量能温和({estimated_vol:.1f}%)")
+        elif estimated_vol > 5:  # 量能爆发
+            score += 15
+            signals.append(f"量能爆发({estimated_vol:.1f}%)")
+        else:  # 量能不足
+            score += 5
+            signals.append(f"量能不足({estimated_vol:.1f}%)")
+    
+    # 4. 成交额评分（+10）
+    if amount > 1e8:  # 超过1亿成交额
         score += 10
+        signals.append("成交活跃")
+    elif amount > 5e7:  # 5000万以上
+        score += 5
+        signals.append("成交尚可")
+    
+    # 5. 板块评分（+5）
+    if code.startswith('6'):
+        score += 5
         signals.append("沪市主板")
     elif code.startswith('0'):
-        score += 10
+        score += 5
         signals.append("深市主板")
     elif code.startswith('3'):
-        score += 5
+        score += 3
         signals.append("创业板")
     elif code.startswith('688'):
-        score += 5
+        score += 3
         signals.append("科创板")
     
     # 确保分数在0-100之间
     score = min(max(score, 0), 100)
     
     # 计算推荐参数
-    position_pct = 0.1  # 默认10%仓位
-    buy_price = current_price
-    stop_loss = current_price * 0.95  # 5%止损
-    take_profit = current_price * 1.10  # 10%止盈
+    position_pct = 0.10 if score >= 70 else 0.08 if score >= 50 else 0.05
+    buy_price = round(current_price * 1.002, 2)  # 高于当前价0.2%
+    stop_loss = round(low_price * 0.98 if low_price else current_price * 0.95, 2)
+    take_profit = round(buy_price * 1.12, 2)
     
     return {
         "code": code,
@@ -414,14 +476,19 @@ def score_stock_simple(code: str, name: str, current_price: float, change_pct: f
         "change_pct": change_pct,
         "score": score,
         "signals": signals[:3],  # 最多显示3个信号
-        "buy_price": round(buy_price, 2),
-        "stop_loss": round(stop_loss, 2),
-        "take_profit": round(take_profit, 2),
-        "position_pct": position_pct
+        "buy_price": buy_price,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "position_pct": position_pct,
+        "rsi": 50,  # 占位值
+        "macd": 0,  # 占位值
+        "vol_ratio": 1.0  # 占位值
     }
 
 
-def score_stock(code: str, name: str, current_price: float, change_pct: float) -> Optional[Dict]:
+def score_stock(code: str, name: str, current_price: float, change_pct: float,
+                volume: int = 0, amount: float = 0, open_price: float = None,
+                high_price: float = None, low_price: float = None) -> Optional[Dict]:
     """对单只股票打分（完整版，优先使用历史数据，降级到简化版）"""
     # 尝试获取历史数据进行完整评分
     try:
@@ -523,7 +590,7 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float) -
     except Exception as e:
         # 历史数据不可用，降级到简化版
         print(f"[DEBUG] {code} 历史评分失败，使用简化版: {e}")
-        return score_stock_simple(code, name, current_price, change_pct)
+        return score_stock_simple(code, name, current_price, change_pct, volume, amount, open_price, high_price, low_price)
 
 # ─────────────────────────────────────────────
 # 主选股流程
@@ -538,40 +605,65 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
         print("[ERROR] 无法获取真实行情数据")
         return []
 
-    # 使用全市场所有股票进行分析
-    candidates = stock_list
-    print(f"[INFO] 对全部 {len(candidates)} 只股票进行技术分析...")
-    
-    # 按涨幅排序，优先分析涨幅较好的股票
-    candidates.sort(key=lambda x: x["change_pct"], reverse=True)
-    
-    # 限制分析数量以提高效率，但确保覆盖足够多的股票
-    max_analyze = min(len(candidates), 1000)  # 最多分析1000只股票
-    candidates = candidates[:max_analyze]
-    print(f"[INFO] 将分析前 {max_analyze} 只涨幅较好的股票...")
+    # 先按代码去重（同一只股票只保留一条）
+    seen_codes = set()
+    deduped = []
+    for s in stock_list:
+        if s["code"] not in seen_codes:
+            seen_codes.add(s["code"])
+            deduped.append(s)
+    stock_list = deduped
+    print(f"[INFO] 去重后共 {len(stock_list)} 只候选股票")
+
+    # 对候选池随机打散（避免每次都分析完全相同的股票），再按成交额排序
+    # 按成交额从高到低排序，保证分析流动性好的股票
+    stock_list.sort(key=lambda x: x["amount"], reverse=True)
+
+    # 限制分析数量以提高效率
+    max_analyze = min(len(stock_list), 800)
+    candidates = stock_list[:max_analyze]
+    print(f"[INFO] 将分析成交额前 {max_analyze} 只股票...")
 
     results = []
+    seen_result_codes = set()  # 评分结果也去重
     analyzed_count = 0
     for stock in candidates:
         analyzed_count += 1
         if analyzed_count % 100 == 0:
             print(f"[进度] 已分析 {analyzed_count}/{max_analyze} 只股票...")
+
+        # 跳过已经有结果的股票（双重去重保险）
+        if stock["code"] in seen_result_codes:
+            continue
         
-        result = score_stock(stock["code"], stock["name"], stock["current_price"], stock["change_pct"])
+        result = score_stock(
+            stock["code"], stock["name"],
+            stock["current_price"], stock["change_pct"],
+            volume=stock.get("volume", 0),
+            amount=stock.get("amount", 0),
+            open_price=stock.get("open_price"),
+            high_price=stock.get("high_price"),
+            low_price=stock.get("low_price"),
+        )
         
         if result and result["score"] >= 50:
             results.append(result)
+            seen_result_codes.add(stock["code"])
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+    # 评分相同时加入随机扰动，保证每次推荐有变化
+    for r in results:
+        r["_sort_key"] = r["score"] + random.uniform(0, 3)
+    results.sort(key=lambda x: x["_sort_key"], reverse=True)
     top = results[:top_n]
+    # 清除内部排序字段
+    for r in top:
+        r.pop("_sort_key", None)
 
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 扫描完成，找到 {len(results)} 只候选，返回前 {len(top)} 只推荐股票")
 
-    # 为每个用户计算建议股数（全局推荐，但股数根据用户资金计算）
-    # 这里我们使用默认资金计算，上线后每个用户会看到不同股数
+    # 为每个用户计算建议股数
     suggestions = []
     for r in top:
-        # 默认使用 150000 元资金计算（15万元）
         account_value = 150000.0
         shares = int(account_value * r["position_pct"] / r["buy_price"] // 100 * 100)
         shares = max(shares, 100)
@@ -581,8 +673,8 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
             **r,
             "suggested_shares": shares,
             "estimated_cost": round(cost, 2),
-            "action": "买入",  # 上线后根据用户持仓动态计算
-            "already_holding": False,  # 上线后根据用户持仓动态计算
+            "action": "买入",
+            "already_holding": False,
             "updated_at": datetime.now().isoformat()
         })
 
