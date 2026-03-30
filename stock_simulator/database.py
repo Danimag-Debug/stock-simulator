@@ -103,6 +103,7 @@ def init_db():
         change_pct REAL NOT NULL,
         score INTEGER NOT NULL,
         signals TEXT,  -- JSON 数组
+        score_breakdown TEXT,  -- JSON 对象，各维度评分明细
         buy_price REAL NOT NULL,
         stop_loss REAL NOT NULL,
         take_profit REAL NOT NULL,
@@ -117,6 +118,13 @@ def init_db():
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    
+    # 如果 suggestions 表已存在但缺少 score_breakdown 列，尝试迁移
+    try:
+        cursor.execute("ALTER TABLE suggestions ADD COLUMN score_breakdown TEXT")
+        print("[数据库] 已为 suggestions 表添加 score_breakdown 列")
+    except Exception:
+        pass  # 列已存在，忽略
     
     # 创建索引
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON accounts(user_id)")
@@ -349,16 +357,18 @@ def save_suggestions(suggestions: List[Dict]):
     # 插入去重后的推荐
     for s in deduped:
         signals_json = json.dumps(s.get("signals", []), ensure_ascii=False)
+        breakdown_json = json.dumps(s.get("score_breakdown", {}), ensure_ascii=False)
         
         cursor.execute("""
             INSERT INTO suggestions 
-            (stock_code, stock_name, current_price, change_pct, score, signals, 
+            (stock_code, stock_name, current_price, change_pct, score, signals, score_breakdown,
              buy_price, stop_loss, take_profit, position_pct, rsi, macd, vol_ratio,
              suggested_shares, estimated_cost, action, already_holding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             s["code"], s["name"], s["current_price"], s["change_pct"], s["score"],
-            signals_json, s["buy_price"], s["stop_loss"], s["take_profit"],
+            signals_json, breakdown_json,
+            s["buy_price"], s["stop_loss"], s["take_profit"],
             s["position_pct"], s.get("rsi"), s.get("macd"), s.get("vol_ratio"),
             s["suggested_shares"], s["estimated_cost"], s["action"], 
             int(s.get("already_holding", False))
@@ -384,6 +394,7 @@ def load_suggestions() -> List[Dict]:
     result = []
     for row in dict_rows(rows):
         row["signals"] = json.loads(row["signals"]) if row["signals"] else []
+        row["score_breakdown"] = json.loads(row["score_breakdown"]) if row.get("score_breakdown") else {}
         row["already_holding"] = bool(row["already_holding"])
         # 字段名映射：前端使用 code/name，数据库存的是 stock_code/stock_name
         row["code"] = row.get("stock_code", "")
