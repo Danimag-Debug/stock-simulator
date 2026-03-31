@@ -1,6 +1,16 @@
 """
 选股引擎 - 数据库版本（支持多用户）
-多维度智能评分系统：技术面 + 基本面 + 新闻情报 + 行业热度
+专业多因子量化评分系统 v4.0
+
+评分体系（来自专业交易员视角）：
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+维度           满分    核心指标
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+技术面         40分    布林带/KDJ/MACD/RSI/WR/ATR/OBV/VWAP/动量
+基本面         25分    PE/PB/ROE/PEG/股息率/DCF估值/成长性
+行业情报       35分    行业热度/资金流向/新闻情绪/机构关注
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+总分: 100分
 """
 
 import json
@@ -52,10 +62,11 @@ except ImportError:
 try:
     import news_analyzer
     import fundamental_analyzer
+    import technical_analyzer   # 新增：专业技术分析模块
     if TUSHARE_AVAILABLE:
         fundamental_analyzer.set_pro_api(ts.pro_api())
     ANALYSIS_MODULES_AVAILABLE = True
-    print("[INFO] 辅助分析模块加载成功（新闻+基本面）")
+    print("[INFO] 辅助分析模块加载成功（新闻+基本面+专业技术分析）")
 except Exception as _e:
     ANALYSIS_MODULES_AVAILABLE = False
     print(f"[WARN] 辅助分析模块加载失败: {_e}")
@@ -386,166 +397,67 @@ def calc_vol_ratio(data: List[Dict], period=10) -> List[Dict]:
 
 def _score_technical(code: str, current_price: float, change_pct: float,
                      volume: int, amount: float, open_price: Optional[float],
-                     high_price: Optional[float], low_price: Optional[float]) -> Tuple[int, List[str], float, float, float]:
+                     high_price: Optional[float], low_price: Optional[float]) -> Tuple[int, List[str], Dict]:
     """
-    技术面评分（0-40分）
-    返回：(分数, 信号列表, rsi值, macd值, vol_ratio值)
+    专业技术面评分（0-40分）v4.0
     
-    首先尝试基于历史K线的高精度分析，失败则降级到纯实时行情分析
+    策略：
+    1. 优先使用历史K线（Tushare Pro）进行完整专业技术分析
+    2. 降级：使用实时行情简化分析
+    
+    返回：(分数, 信号列表, 指标字典)
     """
-    rsi_val = 50.0
-    macd_val = 0.0
-    vol_ratio_val = 1.0
-    signals = []
-    score = 0
-
-    # ── 尝试历史K线分析（需要Tushare Pro权限）──
-    hist_score = 0
-    if TUSHARE_AVAILABLE:
+    # ── 尝试历史K线分析 ──
+    if TUSHARE_AVAILABLE and ANALYSIS_MODULES_AVAILABLE:
         try:
-            hist = get_hist_data(code, days=60)
+            hist = get_hist_data(code, days=90)  # 获取90天数据，保证指标准确
             if hist and len(hist) >= 30:
-                hist = calc_ma(hist)
-                hist = calc_macd(hist)
-                hist = calc_rsi(hist)
-                hist = calc_vol_ratio(hist)
-
-                last = hist[-1]
-                prev = hist[-2]
-                rsi_val = float(last.get("rsi", 50))
-                macd_val = float(last.get("macd", 0))
-                vol_ratio_val = float(last.get("vol_ratio", 1))
-
-                # 均线系统（0-15分）
-                if all(last.get(f"ma{w}") for w in [5, 10, 20, 30]):
-                    if last["ma5"] > last["ma10"] > last["ma20"] > last["ma30"]:
-                        hist_score += 15
-                        signals.append("均线多头排列")
-                    elif last["ma5"] > last["ma20"]:
-                        # 判断金叉
-                        if prev.get("ma5") and prev["ma5"] <= prev.get("ma20", prev["ma5"]):
-                            hist_score += 13
-                            signals.append("MA5金叉MA20")
-                        else:
-                            hist_score += 8
-                            signals.append("短线上方")
-
-                # MACD（0-12分）
-                dif = last.get("dif", 0)
-                dea = last.get("dea", 0)
-                prev_dif = prev.get("dif", 0)
-                prev_dea = prev.get("dea", 0)
-                if prev_dif is not None and dif is not None:
-                    if prev_dif <= (prev_dea or 0) and dif > (dea or 0):
-                        hist_score += 12
-                        signals.append("MACD金叉")
-                    elif macd_val > 0 and dif > 0:
-                        hist_score += 6
-                        signals.append("MACD多头区")
-                    elif macd_val > 0:
-                        hist_score += 3
-                        signals.append("MACD柱翻红")
-
-                # RSI（0-8分）
-                if 40 <= rsi_val <= 60:
-                    hist_score += 8
-                    signals.append(f"RSI健康({rsi_val:.0f})")
-                elif 35 <= rsi_val < 40:
-                    hist_score += 6
-                    signals.append(f"RSI超卖反弹区({rsi_val:.0f})")
-                elif rsi_val > 75:
-                    hist_score -= 5
-                    signals.append(f"RSI超买风险({rsi_val:.0f})")
-                elif rsi_val < 30:
-                    hist_score += 4
-                    signals.append(f"RSI极度超卖({rsi_val:.0f})")
-                else:
-                    hist_score += 3
-
-                # 量比（0-5分）
-                if 1.5 <= vol_ratio_val <= 4:
-                    hist_score += 5
-                    signals.append(f"温和放量({vol_ratio_val:.1f}x)")
-                elif vol_ratio_val > 4:
-                    hist_score += 3
-                    signals.append(f"大幅放量({vol_ratio_val:.1f}x)")
-                elif vol_ratio_val < 0.5:
-                    hist_score -= 2
-                    signals.append(f"量能萎缩({vol_ratio_val:.1f}x)")
-                else:
-                    hist_score += 1
-
-                score = min(max(hist_score, 0), 40)
-                return score, signals, rsi_val, macd_val, vol_ratio_val
+                # 使用专业技术分析模块
+                score, signals, indicators = technical_analyzer.score_technical_professional(
+                    hist, current_price, change_pct, amount
+                )
+                return score, signals, indicators
         except Exception as _e:
-            pass  # 降级到纯实时分析
-
-    # ── 降级：基于实时行情的技术分析（0-40分）──
-    # A. 涨幅质量（0-15分）
-    if 0.5 <= change_pct <= 3.0:
-        score += 15
-        signals.append(f"温和上涨({change_pct:.1f}%)")
-    elif 3.0 < change_pct <= 5.5:
-        score += 12
-        signals.append(f"强势上涨({change_pct:.1f}%)")
-    elif -1.5 <= change_pct < 0:
-        score += 10
-        signals.append(f"小幅回调({change_pct:.1f}%,可建仓)")
-    elif -4 <= change_pct < -1.5:
-        score += 7
-        signals.append(f"回调({change_pct:.1f}%)")
-    elif 5.5 < change_pct <= 8:
-        score += 8
-        signals.append(f"大涨({change_pct:.1f}%,追高谨慎)")
-    elif change_pct > 8:
-        score += 3
-        signals.append(f"接近涨停({change_pct:.1f}%)")
+            pass  # 降级到实时行情
+    
+    # ── 降级：基于实时行情的简化分析 ──
+    if ANALYSIS_MODULES_AVAILABLE:
+        score, signals, indicators = technical_analyzer._score_technical_simple(
+            current_price, change_pct, amount
+        )
     else:
-        score += 5
-        signals.append(f"较大跌幅({change_pct:.1f}%)")
-
-    # B. 日内K线形态（0-12分）
-    if open_price and high_price and low_price and high_price > low_price:
-        price_range = high_price - low_price
-        position = (current_price - low_price) / price_range  # 0=最低，1=最高
+        # 完全降级：不依赖任何模块
+        score = 0
+        signals = []
         
-        # 实体长度（volatility）
-        body_pct = abs(current_price - open_price) / open_price * 100
-        
-        if 0.3 <= position <= 0.65 and body_pct < 3:
+        if 0.5 <= change_pct <= 3.0:
+            score += 15
+            signals.append(f"温和上涨({change_pct:.1f}%)")
+        elif 3.0 < change_pct <= 5.5:
             score += 12
-            signals.append(f"K线实体健康")
-        elif position < 0.25 and change_pct < 0:
-            # 下影线长，有支撑
-            lower_shadow = (current_price - low_price) / current_price * 100
-            if lower_shadow > 1:
-                score += 10
-                signals.append(f"下影线支撑")
-            else:
-                score += 6
-        elif position > 0.8 and change_pct > 3:
-            score += 5
-            signals.append(f"上方阻力大")
-        else:
+            signals.append(f"强势上涨({change_pct:.1f}%)")
+        elif -1.5 <= change_pct < 0:
+            score += 10
+            signals.append(f"小幅回调({change_pct:.1f}%)")
+        elif -4 <= change_pct < -1.5:
             score += 7
-            signals.append(f"K线位置({position*100:.0f}%)")
-
-    # C. 成交量质量（0-13分）
-    if amount >= 5e8:        # 5亿以上
-        score += 13
-        signals.append(f"成交量活跃({amount/1e8:.1f}亿)")
-    elif amount >= 1e8:      # 1亿以上
-        score += 10
-        signals.append(f"成交量良好({amount/1e8:.1f}亿)")
-    elif amount >= 5e7:      # 5000万以上
-        score += 6
-        signals.append(f"成交量尚可")
-    else:
-        score += 2
-        signals.append(f"成交量偏低")
-
-    score = min(max(score, 0), 40)
-    return score, signals, rsi_val, macd_val, vol_ratio_val
+            signals.append(f"回调({change_pct:.1f}%)")
+        else:
+            score += 5
+            signals.append(f"涨幅({change_pct:.1f}%)")
+        
+        if amount >= 5e8:
+            score += 13
+            signals.append(f"成交活跃({amount/1e8:.1f}亿)")
+        elif amount >= 1e8:
+            score += 10
+        elif amount >= 5e7:
+            score += 6
+        
+        score = min(score, 40)
+        indicators = {"rsi": 50, "k": 50, "d": 50, "j": 50, "wr": -50, "macd": 0, "vol_ratio": 1.0, "momentum_10d": 0}
+    
+    return score, signals, indicators
 
 
 def _score_fundamental_wrapper(code: str, name: str, current_price: float) -> Tuple[int, List[str]]:
@@ -633,32 +545,36 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
     多维度综合评分（v3.1）
     
     评分体系：
-    ┌────────────────────────────────────────────────────┐
-    │ 维度            │ 满分 │ 说明                       │
-    ├────────────────────────────────────────────────────┤
-    │ 技术面           │  40  │ K线形态/MACD/RSI/量能      │
-    │ 基本面           │  25  │ PE/PB/ROE/毛利/成长性      │
-    │ 新闻行业         │  35  │ 行业热度+公告情绪+资金流    │
-    └────────────────────────────────────────────────────┘
-    总分上限：100分，各维度详细理由存储用于详情页展示
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ 维度            │ 满分 │ 核心指标                                   │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 技术面           │  40  │ 布林带/KDJ/MACD/RSI/威廉/ATR/OBV/VWAP   │
+    │ 基本面           │  25  │ PE/PB/ROE/PEG/股息率/成长性              │
+    │ 行业情报         │  35  │ 行业热度+资金流+新闻情绪                  │
+    └────────────────────────────────────────────────────────────────────┘
     """
     all_signals = []
     score_breakdown = {}
-    detail_reasons = {}  # 各维度详细理由，用于详情页
+    detail_reasons = {}
 
     # ── 维度1：技术面（40分）──
-    tech_score, tech_signals, rsi_val, macd_val, vol_ratio_val = _score_technical(
+    tech_score, tech_signals, tech_indicators = _score_technical(
         code, current_price, change_pct, volume, amount, open_price, high_price, low_price
     )
     score_breakdown["技术面"] = tech_score
     detail_reasons["技术面"] = tech_signals
     all_signals.extend(tech_signals[:3])
 
+    # 从指标字典提取关键值（向后兼容）
+    rsi_val = tech_indicators.get("rsi", 50.0)
+    macd_val = tech_indicators.get("macd", 0.0)
+    vol_ratio_val = tech_indicators.get("vol_ratio", 1.0)
+
     # ── 维度2：基本面（25分）──
     if enable_deep_analysis:
         fund_score, fund_signals = _score_fundamental_wrapper(code, name, current_price)
     else:
-        fund_score = 10 + (int(code[-2:]) % 6)  # 差异化默认分
+        fund_score = 10 + (int(code[-2:]) % 6)
         fund_signals = []
     score_breakdown["基本面"] = fund_score
     detail_reasons["基本面"] = fund_signals
@@ -668,7 +584,7 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
     if enable_deep_analysis:
         news_score, news_signals = _score_news_sector_wrapper(code, name)
     else:
-        news_score = 12 + (int(code[-2:]) % 8)  # 差异化默认分
+        news_score = 12 + (int(code[-2:]) % 8)
         news_signals = []
     score_breakdown["新闻行业"] = news_score
     detail_reasons["新闻行业"] = news_signals
@@ -678,38 +594,55 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
     total_score = tech_score + fund_score + news_score
     total_score = min(max(total_score, 0), 100)
 
-    # ── 止损止盈计算（专业策略）──
-    buy_price = round(current_price * 1.002, 2)
-    
-    # 止损：考虑K线日内低点 + 固定比例止损
-    if low_price and low_price > 0:
-        # 止损设在日内最低点下方3%，但不超过当前价5%亏损
-        stop_loss = round(min(low_price * 0.97, current_price * 0.95), 2)
+    # ── 专业止损止盈计算（ATR动态方法）──
+    hist_data = None
+    if TUSHARE_AVAILABLE and enable_deep_analysis:
+        try:
+            hist_data = get_hist_data(code, days=30)
+        except:
+            pass
+
+    if hist_data and ANALYSIS_MODULES_AVAILABLE:
+        buy_price, stop_loss, take_profit = technical_analyzer.calc_dynamic_stop_loss(
+            hist_data, current_price, total_score
+        )
     else:
-        stop_loss = round(current_price * 0.95, 2)
-    
-    # 止盈：根据评分动态设置（高分股票设更高目标）
+        buy_price = round(current_price * 1.001, 2)
+        if low_price and low_price > 0:
+            stop_loss = round(min(low_price * 0.97, current_price * 0.95), 2)
+        else:
+            stop_loss = round(current_price * 0.95, 2)
+        if total_score >= 78:
+            take_profit = round(buy_price * 1.20, 2)
+        elif total_score >= 65:
+            take_profit = round(buy_price * 1.15, 2)
+        elif total_score >= 55:
+            take_profit = round(buy_price * 1.10, 2)
+        else:
+            take_profit = round(buy_price * 1.08, 2)
+
+    # ── 仓位管理（基于评分和风险评估）──
+    stop_loss_pct = (buy_price - stop_loss) / buy_price if buy_price > 0 else 0.05
+
     if total_score >= 78:
-        take_profit = round(buy_price * 1.20, 2)   # 20%
-        position_pct = 0.15
-        strategy_note = "强势股，分批建仓，目标20%"
+        position_pct = min(0.18, 0.01 / max(stop_loss_pct, 0.01))
+        position_pct = min(position_pct, 0.18)
+        strategy_note = "强势股，分批建仓，目标20%+"
     elif total_score >= 65:
-        take_profit = round(buy_price * 1.15, 2)   # 15%
-        position_pct = 0.12
+        position_pct = min(0.12, 0.008 / max(stop_loss_pct, 0.01))
+        position_pct = min(position_pct, 0.12)
         strategy_note = "优质股，一次性建仓，目标15%"
     elif total_score >= 55:
-        take_profit = round(buy_price * 1.10, 2)   # 10%
         position_pct = 0.08
         strategy_note = "普通机会，轻仓参与，目标10%"
     else:
-        take_profit = round(buy_price * 1.08, 2)   # 8%
         position_pct = 0.05
         strategy_note = "观察仓位，谨慎参与，止损严格"
 
     # ── 生成详情推荐理由文本 ──
     recommendation_detail = _build_recommendation_detail(
         code, name, current_price, change_pct, total_score,
-        score_breakdown, detail_reasons,
+        score_breakdown, detail_reasons, tech_indicators,
         rsi_val, macd_val, vol_ratio_val, amount,
         buy_price, stop_loss, take_profit, position_pct, strategy_note
     )
@@ -720,10 +653,10 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
         "current_price": current_price,
         "change_pct": change_pct,
         "score": total_score,
-        "score_breakdown": score_breakdown,         # 各维度分数
-        "detail_reasons": detail_reasons,           # 各维度详细理由
-        "recommendation_detail": recommendation_detail,  # 详情页推荐报告
-        "signals": all_signals[:5],                 # 最多5个简要信号
+        "score_breakdown": score_breakdown,
+        "detail_reasons": detail_reasons,
+        "recommendation_detail": recommendation_detail,
+        "signals": all_signals[:5],
         "buy_price": buy_price,
         "stop_loss": stop_loss,
         "take_profit": take_profit,
@@ -732,19 +665,21 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
         "rsi": round(rsi_val, 1),
         "macd": round(macd_val, 4),
         "vol_ratio": round(vol_ratio_val, 2),
+        "tech_indicators": tech_indicators,
     }
 
 
 def _build_recommendation_detail(
     code: str, name: str, current_price: float, change_pct: float,
     total_score: int, score_breakdown: Dict, detail_reasons: Dict,
+    tech_indicators: Dict,
     rsi: float, macd: float, vol_ratio: float, amount: float,
     buy_price: float, stop_loss: float, take_profit: float,
     position_pct: float, strategy_note: str
 ) -> Dict:
     """
-    构建完整的推荐理由报告（用于详情页展示）
-    返回结构化的分析报告字典
+    构建专业推荐报告（v4.0）
+    整合所有技术指标和基本面信息，生成专业级分析报告
     """
     # 推荐等级
     if total_score >= 78:
@@ -763,60 +698,94 @@ def _build_recommendation_detail(
         grade = "C"
         grade_desc = "观察"
         grade_color = "#8b949e"
-    
-    # 技术面摘要
+
+    # 各维度数据
     tech_signals = detail_reasons.get("技术面", [])
     tech_score = score_breakdown.get("技术面", 0)
-    
-    # 基本面摘要
     fund_signals = detail_reasons.get("基本面", [])
     fund_score = score_breakdown.get("基本面", 0)
-    
-    # 新闻行业摘要
     news_signals = detail_reasons.get("新闻行业", [])
     news_score = score_breakdown.get("新闻行业", 0)
-    
+
     # 行业前景
     industry_outlook = ""
+    industry = "其他"
     if ANALYSIS_MODULES_AVAILABLE:
         try:
             industry = news_analyzer.get_stock_industry(code, name)
             industry_outlook = news_analyzer._get_industry_outlook(industry)
         except:
             pass
+
+    # 专业技术指标摘要
+    j_val = tech_indicators.get("j", 50)
+    wr_val = tech_indicators.get("wr", -50)
+    momentum = tech_indicators.get("momentum_10d", 0)
+    atr_pct = tech_indicators.get("atr_pct", 0)
+    boll_pos = tech_indicators.get("boll_position", 50)
+    boll_width = tech_indicators.get("boll_width", 10)
+    obv_trend = tech_indicators.get("obv_trend", "未知")
+    ma20 = tech_indicators.get("ma20")
+    ma60 = tech_indicators.get("ma60")
+    vwap = tech_indicators.get("vwap")
+    
+    # 趋势判断
+    trend_direction = _judge_trend_direction(tech_indicators, change_pct)
     
     # 风险提示
     risk_notes = []
-    if rsi > 70:
-        risk_notes.append(f"RSI={rsi:.0f}已进入超买区间，短期有回调风险")
+    if rsi > 75:
+        risk_notes.append(f"RSI={rsi:.0f}超买区间，短期有回调风险")
+    elif rsi > 70:
+        risk_notes.append(f"RSI={rsi:.0f}偏高，谨慎追高")
+    if j_val > 90:
+        risk_notes.append(f"KDJ-J={j_val:.0f}超买，注意短期回调")
     if change_pct > 7:
-        risk_notes.append("今日涨幅较大，追高风险需注意，建议等待回踩机会")
+        risk_notes.append("今日涨幅较大，追高风险需注意，建议等待回踩")
     if change_pct < -5:
         risk_notes.append("今日跌幅较大，需确认止跌信号后再入场")
-    stop_loss_pct = (buy_price - stop_loss) / buy_price * 100
-    if stop_loss_pct > 7:
-        risk_notes.append(f"止损空间{stop_loss_pct:.1f}%较大，建议控制仓位")
-    
-    # 盈亏比
+    stop_loss_pct_val = (buy_price - stop_loss) / buy_price * 100
+    if stop_loss_pct_val > 7:
+        risk_notes.append(f"止损空间{stop_loss_pct_val:.1f}%较大，建议控制仓位")
+    if atr_pct > 4:
+        risk_notes.append(f"ATR波动率{atr_pct:.1f}%较高，持仓须承受较大波动")
+    if not risk_notes:
+        risk_notes.append("当前无明显风险信号，注意跟踪市场变化")
+
+    # 盈亏比计算
     profit_pct = (take_profit - buy_price) / buy_price * 100
     loss_pct = (buy_price - stop_loss) / buy_price * 100
     risk_reward = profit_pct / loss_pct if loss_pct > 0 else 0
-    
+
     return {
         "grade": grade,
         "grade_desc": grade_desc,
         "grade_color": grade_color,
         "total_score": total_score,
+        "trend_direction": trend_direction,
         "score_breakdown": score_breakdown,
         "technical": {
             "score": tech_score,
             "max_score": 40,
             "signals": tech_signals,
+            # 核心指标
             "rsi": rsi,
             "macd": round(macd, 4),
+            "kdj_k": tech_indicators.get("k", 50),
+            "kdj_d": tech_indicators.get("d", 50),
+            "kdj_j": j_val,
+            "wr": wr_val,
             "vol_ratio": vol_ratio,
+            "momentum_10d": momentum,
+            "atr_pct": atr_pct,
+            "boll_position": boll_pos,
+            "boll_width": boll_width,
+            "obv_trend": obv_trend,
+            "ma20": ma20,
+            "ma60": ma60,
+            "vwap": vwap,
             "amount_yi": round(amount / 1e8, 2) if amount else 0,
-            "summary": _summarize_technical(tech_score, tech_signals, rsi, macd, vol_ratio)
+            "summary": _summarize_technical_pro(tech_score, tech_signals, tech_indicators)
         },
         "fundamental": {
             "score": fund_score,
@@ -828,6 +797,7 @@ def _build_recommendation_detail(
             "score": news_score,
             "max_score": 35,
             "signals": news_signals,
+            "industry": industry,
             "industry_outlook": industry_outlook,
             "summary": _summarize_news(news_score, news_signals)
         },
@@ -842,13 +812,64 @@ def _build_recommendation_detail(
             "risk_reward_ratio": round(risk_reward, 2),
             "strategy_note": strategy_note,
         },
-        "risk_notes": risk_notes if risk_notes else ["当前无明显风险信号"],
+        "risk_notes": risk_notes,
         "disclaimer": "以上分析仅供模拟学习参考，不构成真实投资建议。股市有风险，投资需谨慎。"
     }
 
 
+def _judge_trend_direction(tech_indicators: Dict, change_pct: float) -> str:
+    """判断趋势方向（专业视角）"""
+    ma5 = tech_indicators.get("ma5")
+    ma20 = tech_indicators.get("ma20")
+    ma60 = tech_indicators.get("ma60")
+    momentum = tech_indicators.get("momentum_10d", 0)
+    macd = tech_indicators.get("macd", 0)
+    rsi = tech_indicators.get("rsi", 50)
+    
+    bull_count = 0
+    bear_count = 0
+    
+    if ma5 and ma20:
+        if ma5 > ma20:
+            bull_count += 2
+        else:
+            bear_count += 2
+    
+    if ma20 and ma60:
+        if ma20 > ma60:
+            bull_count += 1
+        else:
+            bear_count += 1
+    
+    if macd > 0:
+        bull_count += 1
+    else:
+        bear_count += 1
+    
+    if momentum > 0:
+        bull_count += 1
+    elif momentum < -5:
+        bear_count += 1
+    
+    if rsi > 55:
+        bull_count += 1
+    elif rsi < 45:
+        bear_count += 1
+    
+    if bull_count >= 4:
+        return "强势上涨趋势"
+    elif bull_count >= 3:
+        return "偏多震荡"
+    elif bear_count >= 4:
+        return "下降趋势"
+    elif bear_count >= 3:
+        return "偏空震荡"
+    else:
+        return "横盘整理"
+
+
 def _summarize_technical(score: int, signals: List[str], rsi: float, macd: float, vol_ratio: float) -> str:
-    """生成技术面总结文字"""
+    """生成技术面总结文字（旧版兼容）"""
     if score >= 32:
         trend = "技术形态强势"
     elif score >= 22:
@@ -872,6 +893,59 @@ def _summarize_technical(score: int, signals: List[str], rsi: float, macd: float
         parts.append(f"量比{vol_ratio:.1f}倍放量")
     
     return "，".join(parts) + "。"
+
+
+def _summarize_technical_pro(score: int, signals: List[str], tech_indicators: Dict) -> str:
+    """生成专业技术面总结文字（v4.0）"""
+    rsi = tech_indicators.get("rsi", 50)
+    j = tech_indicators.get("j", 50)
+    wr = tech_indicators.get("wr", -50)
+    momentum = tech_indicators.get("momentum_10d", 0)
+    boll_pos = tech_indicators.get("boll_position", 50)
+    obv_trend = tech_indicators.get("obv_trend", "")
+    vol_ratio = tech_indicators.get("vol_ratio", 1.0)
+    
+    if score >= 32:
+        trend = "多指标共振，技术形态强势"
+    elif score >= 24:
+        trend = "技术面良好，趋势偏多"
+    elif score >= 16:
+        trend = "技术面中性，震荡整理"
+    else:
+        trend = "技术面偏弱，注意风险"
+    
+    key_parts = [trend]
+    
+    # 核心指标状态
+    if rsi > 70:
+        key_parts.append(f"RSI={rsi:.0f}超买")
+    elif rsi < 35:
+        key_parts.append(f"RSI={rsi:.0f}超卖反弹机会")
+    else:
+        key_parts.append(f"RSI={rsi:.0f}")
+    
+    if j < 20:
+        key_parts.append(f"KDJ超卖(J={j:.0f})")
+    elif j > 90:
+        key_parts.append(f"KDJ超买(J={j:.0f})")
+    
+    if momentum > 8:
+        key_parts.append(f"10日动量+{momentum:.1f}%上涨趋势")
+    elif momentum < -8:
+        key_parts.append(f"10日动量{momentum:.1f}%下跌趋势")
+    
+    if boll_pos < 20:
+        key_parts.append("接近布林下轨超跌")
+    elif boll_pos > 85:
+        key_parts.append("接近布林上轨注意压力")
+    
+    if obv_trend == "上升" and vol_ratio > 1.5:
+        key_parts.append("量价齐升主力积累")
+    
+    if signals:
+        key_parts.append("信号：" + "、".join(signals[:2]))
+    
+    return "，".join(key_parts) + "。"
 
 
 def _summarize_fundamental(score: int, signals: List[str]) -> str:
