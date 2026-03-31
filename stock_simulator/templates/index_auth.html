@@ -320,12 +320,200 @@
     width: 100%;
   }
 
+  /* 详情弹窗样式 */
+  .detail-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .detail-modal {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    width: 100%;
+    max-width: 660px;
+    max-height: 88vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  .detail-modal::-webkit-scrollbar { width: 6px; }
+  .detail-modal::-webkit-scrollbar-track { background: transparent; }
+  .detail-modal::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  
+  .detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--card);
+    z-index: 1;
+  }
+  .detail-grade-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .detail-body { padding: 20px 24px; }
+  
+  /* 评分概览行 */
+  .detail-score-overview {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .detail-score-item {
+    background: var(--bg);
+    border-radius: 10px;
+    padding: 12px;
+    text-align: center;
+  }
+  .detail-score-item .dsi-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .detail-score-item .dsi-value { font-size: 18px; font-weight: 700; }
+  .detail-score-item .dsi-max { font-size: 10px; color: var(--muted); }
+  
+  /* 维度分析 */
+  .dimension-section {
+    margin-bottom: 18px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .dimension-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.02);
+    cursor: pointer;
+    user-select: none;
+  }
+  .dimension-header:hover { background: rgba(255,255,255,0.04); }
+  .dimension-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .dim-score-chip {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .dimension-progress {
+    height: 4px;
+    background: rgba(255,255,255,0.08);
+    margin: 0 16px 0;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .dimension-progress-bar { height: 100%; border-radius: 2px; transition: width 0.5s; }
+  .dimension-content {
+    padding: 14px 16px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .signal-tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .signal-tag {
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    border: 1px solid;
+  }
+  .signal-tag.bullish { background: rgba(230,57,70,0.1); border-color: rgba(230,57,70,0.3); color: #e63946; }
+  .signal-tag.bearish { background: rgba(42,157,143,0.1); border-color: rgba(42,157,143,0.3); color: #2a9d8f; }
+  .signal-tag.neutral { background: rgba(139,148,158,0.1); border-color: rgba(139,148,158,0.3); color: var(--muted); }
+  .dim-summary-text {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--muted);
+    padding: 10px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 8px;
+    border-left: 3px solid var(--border);
+  }
+  
+  /* 交易计划 */
+  .trade-plan-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .trade-plan-item {
+    background: var(--bg);
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .tpi-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .tpi-value { font-size: 16px; font-weight: 700; }
+  .tpi-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  
+  /* 行业前景 */
+  .industry-outlook {
+    background: rgba(247,146,57,0.06);
+    border: 1px solid rgba(247,146,57,0.2);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .industry-outlook .outlook-title { font-weight: 600; color: var(--accent); margin-bottom: 6px; font-size: 13px; }
+  
+  /* 风险提示 */
+  .risk-section {
+    background: rgba(230,57,70,0.05);
+    border: 1px solid rgba(230,57,70,0.2);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 16px;
+  }
+  .risk-title { font-size: 13px; font-weight: 600; color: var(--red); margin-bottom: 8px; }
+  .risk-item {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 3px 0;
+    padding-left: 14px;
+    position: relative;
+    line-height: 1.5;
+  }
+  .risk-item::before {
+    content: "▸";
+    position: absolute;
+    left: 0;
+    color: var(--red);
+    font-size: 10px;
+  }
+  
+  /* 免责声明 */
+  .detail-disclaimer {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    border-top: 1px solid var(--border);
+    padding: 12px;
+    opacity: 0.7;
+  }
+  
   /* 响应式 */
   @media (max-width: 1200px) {
     .summary-grid { grid-template-columns: repeat(2, 1fr); }
     .stocks-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+    .detail-score-overview { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 768px) {
+    .trade-plan-grid { grid-template-columns: 1fr; }
+    .detail-score-overview { grid-template-columns: 1fr 1fr; }
     .summary-grid { grid-template-columns: 1fr; }
     .stocks-grid { grid-template-columns: 1fr; }
     .section-header { flex-direction: column; align-items: flex-start; gap: 12px; }
@@ -744,7 +932,9 @@
                 <button class="btn btn-buy" data-code="${code}" data-name="${name}" data-shares="${item.suggested_shares || 100}" data-price="${buyPrice}">
                   ${alreadyHolding ? '加仓' : '买入'}
                 </button>
-                <button class="btn btn-secondary btn-detail" data-code="${code}" data-name="${name}" data-curprice="${curPrice}" data-buyprice="${buyPrice}" data-stoploss="${stopLoss}" data-takeprofit="${takeProfit}" data-score="${score}" data-signals="${encodeURIComponent(JSON.stringify(signals))}">详情</button>
+                <button class="btn btn-secondary btn-detail" style="background:rgba(247,146,57,0.12);border:1px solid rgba(247,146,57,0.3);color:var(--accent);">
+                  📋 推荐理由
+                </button>
               </div>
             `;
             
@@ -754,24 +944,7 @@
             });
             
             card.querySelector('.btn-detail').addEventListener('click', function() {
-              const btn = this;
-              const sigStr = btn.getAttribute('data-signals');
-              let sigs = [];
-              try {
-                sigs = JSON.parse(decodeURIComponent(sigStr));
-              } catch(e) {}
-              showStockDetail(
-                btn.getAttribute('data-code'),
-                JSON.stringify({
-                  name: btn.getAttribute('data-name'),
-                  curPrice: parseFloat(btn.getAttribute('data-curprice')),
-                  buyPrice: parseFloat(btn.getAttribute('data-buyprice')),
-                  stopLoss: parseFloat(btn.getAttribute('data-stoploss')),
-                  takeProfit: parseFloat(btn.getAttribute('data-takeprofit')),
-                  score: parseFloat(btn.getAttribute('data-score')),
-                  signals: sigs
-                })
-              );
+              showStockDetail(code, item);
             });
             
             grid.appendChild(card);
@@ -953,81 +1126,237 @@
         });
     }
 
-    // 股票详情（暂时简单实现）
-    function showStockDetail(code, infoJson) {
-      if (!infoJson) {
-        toast(`暂无详情数据`, 'error');
-        return;
-      }
-      let info;
-      try {
-        info = JSON.parse(infoJson);
-      } catch (e) {
-        console.error('解析详情数据失败:', e, infoJson);
-        toast('解析详情数据失败', 'error');
-        return;
-      }
-      // 创建弹窗
+    // 股票详情 - 显示完整推荐分析报告
+    function showStockDetail(code, item) {
       const existing = document.getElementById('stock-detail-modal');
       if (existing) existing.remove();
 
+      const name = item.name || item.stock_name || '未知';
+      const curPrice = parseFloat(item.current_price || 0);
+      const changePct = parseFloat(item.change_pct || 0);
+      const score = parseInt(item.score || 0);
+      const detail = item.recommendation_detail || {};
+      const breakdown = item.score_breakdown || {};
+      const signals = item.signals || [];
+      const buyPrice = parseFloat(item.buy_price || curPrice);
+      const stopLoss = parseFloat(item.stop_loss || 0);
+      const takeProfit = parseFloat(item.take_profit || 0);
+      
+      // 评分等级颜色
+      const gradeColor = detail.grade_color || (score >= 78 ? '#e63946' : score >= 65 ? '#f79239' : score >= 55 ? '#f0a500' : '#8b949e');
+      const gradeDesc = detail.grade_desc || (score >= 78 ? '强烈推荐' : score >= 65 ? '推荐' : score >= 55 ? '关注' : '观察');
+      
+      // 技术面数据
+      const tech = detail.technical || {};
+      const techScore = breakdown['技术面'] || tech.score || 0;
+      const techSignals = tech.signals || [];
+      const techSummary = tech.summary || '';
+      
+      // 基本面数据
+      const fund = detail.fundamental || {};
+      const fundScore = breakdown['基本面'] || fund.score || 0;
+      const fundSignals = fund.signals || [];
+      const fundSummary = fund.summary || '';
+      
+      // 新闻行业数据
+      const news = detail.news_sector || {};
+      const newsScore = breakdown['新闻行业'] || news.score || 0;
+      const newsSignals = news.signals || [];
+      const newsSummary = news.summary || '';
+      const industryOutlook = news.industry_outlook || '';
+      
+      // 交易计划
+      const tradePlan = detail.trade_plan || {};
+      const profitPct = tradePlan.profit_target_pct || (((takeProfit - buyPrice) / buyPrice) * 100).toFixed(1);
+      const lossPct = tradePlan.stop_loss_pct || (((buyPrice - stopLoss) / buyPrice) * 100).toFixed(1);
+      const rrRatio = tradePlan.risk_reward_ratio || (lossPct > 0 ? (profitPct / lossPct).toFixed(2) : '--');
+      const strategyNote = tradePlan.strategy_note || item.strategy_note || '';
+      
+      // 风险提示
+      const riskNotes = detail.risk_notes || ['当前无明显风险信号'];
+      
+      // 构建维度信号标签HTML
+      function buildSignalTags(sigs) {
+        if (!sigs || sigs.length === 0) return '<span style="color:var(--muted);font-size:12px;">暂无具体信号</span>';
+        return sigs.map(s => {
+          let cls = 'neutral';
+          if (s.includes('⚠️') || s.includes('利空') || s.includes('下滑') || s.includes('高估') || s.includes('亏损') || s.includes('高负债')) cls = 'bearish';
+          else if (s.includes('利好') || s.includes('优') || s.includes('增长') || s.includes('龙头') || s.includes('突破') || s.includes('🔥') || s.includes('🔆') || s.includes('净流入') || s.includes('低估') || s.includes('合理')) cls = 'bullish';
+          return `<span class="signal-tag ${cls}">${s}</span>`;
+        }).join('');
+      }
+      
+      // 维度分数颜色
+      function dimColor(score, maxScore) {
+        const pct = score / maxScore;
+        if (pct >= 0.75) return '#e63946';
+        if (pct >= 0.5) return '#f79239';
+        if (pct >= 0.3) return '#f0a500';
+        return '#8b949e';
+      }
+      
       const modal = document.createElement('div');
       modal.id = 'stock-detail-modal';
-      modal.style.cssText = `
-        position:fixed; top:0; left:0; right:0; bottom:0;
-        background:rgba(0,0,0,0.7); z-index:1000;
-        display:flex; align-items:center; justify-content:center; padding:20px;
-      `;
+      modal.className = 'detail-modal-overlay';
       modal.innerHTML = `
-        <div style="background:var(--card); border:1px solid var(--border); border-radius:16px; padding:28px; max-width:420px; width:100%;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <div class="detail-modal">
+          <!-- 头部 -->
+          <div class="detail-header">
             <div>
-              <div style="font-size:18px; font-weight:700;">${info.name}</div>
-              <div style="color:var(--muted); font-size:13px; margin-top:2px;">${code}</div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:20px;font-weight:700;">${name}</span>
+                <span style="color:var(--muted);font-size:13px;">${code}</span>
+                <span style="font-size:18px;font-weight:700;color:${changePct>=0?'var(--red)':'var(--green)'}">¥${curPrice.toFixed(2)} ${changePct>=0?'+':''}${changePct.toFixed(2)}%</span>
+              </div>
+              <div style="margin-top:6px;">
+                <span class="detail-grade-badge" style="background:${gradeColor}22;border:1px solid ${gradeColor}44;color:${gradeColor};">
+                  ⭐ ${gradeDesc} · 综合评分 ${score}分
+                </span>
+                ${strategyNote ? `<span style="font-size:12px;color:var(--muted);margin-left:8px;">${strategyNote}</span>` : ''}
+              </div>
             </div>
             <button onclick="document.getElementById('stock-detail-modal').remove()"
-              style="background:var(--border); border:none; color:var(--text); padding:6px 12px; border-radius:8px; cursor:pointer; font-size:13px;">
+              style="background:var(--border);border:none;color:var(--text);padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;flex-shrink:0;">
               关闭
             </button>
           </div>
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
-            <div style="background:var(--bg); border-radius:10px; padding:14px;">
-              <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">当前价格</div>
-              <div style="font-size:20px; font-weight:700;">¥${info.curPrice}</div>
+          
+          <div class="detail-body">
+          
+            <!-- 评分概览 -->
+            <div class="detail-score-overview" style="margin-bottom:20px;">
+              <div class="detail-score-item" style="border:2px solid ${dimColor(techScore,40)}22;">
+                <div class="dsi-label">📊 技术面</div>
+                <div class="dsi-value" style="color:${dimColor(techScore,40)};">${techScore}</div>
+                <div class="dsi-max">/ 40分</div>
+              </div>
+              <div class="detail-score-item" style="border:2px solid ${dimColor(fundScore,25)}22;">
+                <div class="dsi-label">🏢 基本面</div>
+                <div class="dsi-value" style="color:${dimColor(fundScore,25)};">${fundScore}</div>
+                <div class="dsi-max">/ 25分</div>
+              </div>
+              <div class="detail-score-item" style="border:2px solid ${dimColor(newsScore,35)}22;">
+                <div class="dsi-label">📰 行业情报</div>
+                <div class="dsi-value" style="color:${dimColor(newsScore,35)};">${newsScore}</div>
+                <div class="dsi-max">/ 35分</div>
+              </div>
+              <div class="detail-score-item" style="border:2px solid ${gradeColor}33;background:${gradeColor}0a;">
+                <div class="dsi-label">🎯 综合评分</div>
+                <div class="dsi-value" style="color:${gradeColor};">${score}</div>
+                <div class="dsi-max">/ 100分</div>
+              </div>
             </div>
-            <div style="background:var(--bg); border-radius:10px; padding:14px;">
-              <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">综合评分</div>
-              <div style="font-size:20px; font-weight:700; color:var(--accent);">${info.score} 分</div>
+            
+            <!-- 技术面分析 -->
+            <div class="dimension-section">
+              <div class="dimension-header">
+                <div class="dimension-title">
+                  📊 技术面分析
+                  <span class="dim-score-chip" style="background:${dimColor(techScore,40)}22;color:${dimColor(techScore,40)};">${techScore}/40</span>
+                </div>
+                <span style="color:var(--muted);font-size:12px;">RSI: ${tech.rsi||item.rsi||'--'} &nbsp; 量比: ${tech.vol_ratio||item.vol_ratio||'--'}x &nbsp; 成交: ${(tech.amount_yi||0).toFixed(2)}亿</span>
+              </div>
+              <div style="height:3px;background:rgba(255,255,255,0.06);margin:0;overflow:hidden;">
+                <div style="height:100%;width:${(techScore/40*100).toFixed(0)}%;background:${dimColor(techScore,40)};transition:width 0.5s;"></div>
+              </div>
+              <div class="dimension-content">
+                <div class="signal-tag-list">${buildSignalTags(techSignals)}</div>
+                ${techSummary ? `<div class="dim-summary-text">${techSummary}</div>` : ''}
+              </div>
             </div>
-            <div style="background:rgba(42,157,143,0.1); border:1px solid rgba(42,157,143,0.3); border-radius:10px; padding:14px;">
-              <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">推荐买入价</div>
-              <div style="font-size:18px; font-weight:700; color:var(--green);">¥${info.buyPrice.toFixed(2)}</div>
+            
+            <!-- 基本面分析 -->
+            <div class="dimension-section">
+              <div class="dimension-header">
+                <div class="dimension-title">
+                  🏢 基本面分析
+                  <span class="dim-score-chip" style="background:${dimColor(fundScore,25)}22;color:${dimColor(fundScore,25)};">${fundScore}/25</span>
+                </div>
+                <span style="color:var(--muted);font-size:12px;">估值·盈利·成长·资金结构</span>
+              </div>
+              <div style="height:3px;background:rgba(255,255,255,0.06);margin:0;overflow:hidden;">
+                <div style="height:100%;width:${(fundScore/25*100).toFixed(0)}%;background:${dimColor(fundScore,25)};transition:width 0.5s;"></div>
+              </div>
+              <div class="dimension-content">
+                <div class="signal-tag-list">${buildSignalTags(fundSignals)}</div>
+                ${fundSummary ? `<div class="dim-summary-text">${fundSummary}</div>` : ''}
+              </div>
             </div>
-            <div style="background:rgba(230,57,70,0.1); border:1px solid rgba(230,57,70,0.3); border-radius:10px; padding:14px;">
-              <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">止损价</div>
-              <div style="font-size:18px; font-weight:700; color:var(--red);">¥${info.stopLoss.toFixed(2)}</div>
+            
+            <!-- 行业情报分析 -->
+            <div class="dimension-section">
+              <div class="dimension-header">
+                <div class="dimension-title">
+                  📰 行业情报分析
+                  <span class="dim-score-chip" style="background:${dimColor(newsScore,35)}22;color:${dimColor(newsScore,35)};">${newsScore}/35</span>
+                </div>
+                <span style="color:var(--muted);font-size:12px;">行业热度·公告情绪·资金流向</span>
+              </div>
+              <div style="height:3px;background:rgba(255,255,255,0.06);margin:0;overflow:hidden;">
+                <div style="height:100%;width:${(newsScore/35*100).toFixed(0)}%;background:${dimColor(newsScore,35)};transition:width 0.5s;"></div>
+              </div>
+              <div class="dimension-content">
+                <div class="signal-tag-list">${buildSignalTags(newsSignals)}</div>
+                ${newsSummary ? `<div class="dim-summary-text">${newsSummary}</div>` : ''}
+              </div>
             </div>
-          </div>
-          <div style="background:rgba(247,146,57,0.1); border:1px solid rgba(247,146,57,0.3); border-radius:10px; padding:14px; margin-bottom:16px;">
-            <div style="color:var(--muted); font-size:12px; margin-bottom:4px;">目标价（盈利目标）</div>
-            <div style="font-size:20px; font-weight:700; color:var(--accent);">¥${info.takeProfit.toFixed(2)}</div>
-            <div style="font-size:12px; color:var(--muted); margin-top:4px;">
-              预期涨幅：+${(((info.takeProfit - info.buyPrice) / info.buyPrice) * 100).toFixed(1)}%
-              &nbsp;|&nbsp;
-              最大回撤：-${(((info.buyPrice - info.stopLoss) / info.buyPrice) * 100).toFixed(1)}%
+            
+            <!-- 行业前景 -->
+            ${industryOutlook ? `
+            <div class="industry-outlook">
+              <div class="outlook-title">🔭 行业前景展望</div>
+              ${industryOutlook}
+            </div>` : ''}
+            
+            <!-- 交易计划 -->
+            <div style="margin-bottom:18px;">
+              <div style="font-size:14px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                💰 操作计划
+                <span style="font-size:12px;font-weight:400;color:var(--muted);">盈亏比 ${rrRatio}:1</span>
+              </div>
+              <div class="trade-plan-grid">
+                <div class="trade-plan-item" style="border:1px solid rgba(42,157,143,0.3);">
+                  <div class="tpi-label">推荐买入价</div>
+                  <div class="tpi-value" style="color:var(--green);">¥${buyPrice.toFixed(2)}</div>
+                  <div class="tpi-note">微高于当前价挂单</div>
+                </div>
+                <div class="trade-plan-item" style="border:1px solid rgba(230,57,70,0.3);">
+                  <div class="tpi-label">止损价</div>
+                  <div class="tpi-value" style="color:var(--red);">¥${stopLoss.toFixed(2)}</div>
+                  <div class="tpi-note">最大亏损 -${lossPct}%</div>
+                </div>
+                <div class="trade-plan-item" style="border:1px solid rgba(247,146,57,0.3);">
+                  <div class="tpi-label">目标价（止盈）</div>
+                  <div class="tpi-value" style="color:var(--accent);">¥${takeProfit.toFixed(2)}</div>
+                  <div class="tpi-note">预期涨幅 +${profitPct}%</div>
+                </div>
+                <div class="trade-plan-item" style="border:1px solid rgba(255,255,255,0.1);">
+                  <div class="tpi-label">建议仓位</div>
+                  <div class="tpi-value">${Math.round((item.position_pct||0.08)*100)}%</div>
+                  <div class="tpi-note">${strategyNote || '控制仓位分散风险'}</div>
+                </div>
+              </div>
             </div>
-          </div>
-          <div style="margin-bottom:16px;">
-            <div style="color:var(--muted); font-size:12px; margin-bottom:8px;">信号指标</div>
-            <div style="display:flex; flex-wrap:wrap; gap:6px;">
-              ${(info.signals || []).map(s => `<span style="background:#21262d; border:1px solid var(--border); border-radius:20px; padding:4px 10px; font-size:12px;">${s}</span>`).join('')}
+            
+            <!-- 风险提示 -->
+            <div class="risk-section">
+              <div class="risk-title">⚠️ 风险提示</div>
+              ${riskNotes.map(r => `<div class="risk-item">${r}</div>`).join('')}
             </div>
-          </div>
-          <div style="font-size:11px; color:var(--muted); text-align:center; border-top:1px solid var(--border); padding-top:12px;">
-            ⚠️ 以上数据仅供学习参考，不构成投资建议
+            
+            <!-- 操作按钮 -->
+            <div style="display:flex;gap:10px;margin-bottom:4px;">
+              <button class="btn" style="flex:1;" onclick="doBuy('${code}','${name.replace(/'/g,"\\'")}',${item.suggested_shares||100},${buyPrice});document.getElementById('stock-detail-modal').remove();">
+                买入 ${item.suggested_shares||100}股 (¥${((item.suggested_shares||100)*buyPrice).toFixed(0)})
+              </button>
+              <button class="btn btn-secondary" style="flex:0.4;" onclick="document.getElementById('stock-detail-modal').remove();">取消</button>
+            </div>
+            
+            <div class="detail-disclaimer">⚠️ 以上分析基于量化模型，仅供模拟学习参考，不构成真实投资建议。股市有风险，投资需谨慎。</div>
           </div>
         </div>
       `;
+      
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.remove();
       });
