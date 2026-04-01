@@ -304,124 +304,132 @@ def _build_all_market_codes() -> List[str]:
     print(f"[INFO] 全市场代码池构建完成，共 {len(codes)} 只股票代码")
     return codes
 
+class StockScanError(Exception):
+    """扫描专用异常：区分「不可扫描」和「扫描后无结果」"""
+    pass
+
+
 def get_stock_list() -> List[Dict]:
     """
     获取全市场实时行情（强制使用真实数据）
+    
+    重要：Tushare不可用或网络严重异常时，抛出 StockScanError 异常（而非静默返回空列表），
+    让调用方能区分「无法获取数据」和「获取到了但筛选后为空」两种情况。
     """
     import pandas as pd
     
-    # 检查 Tushare 是否可用
+    # ── 前置检查：Tushare 是否可用 ──
     if not TUSHARE_AVAILABLE:
-        print(f"[ERROR] Tushare 不可用，无法获取真实行情数据！TUSHARE_AVAILABLE={TUSHARE_AVAILABLE}")
+        print(f"[ERROR] Tushare 不可用！TUSHARE_AVAILABLE={TUSHARE_AVAILABLE}")
         token_from_env = os.getenv("TUSHARE_TOKEN")
         print(f"[DEBUG] TUSHARE_TOKEN from env: {'已设置' if token_from_env else '未设置'}")
-        raise RuntimeError("Tushare 未配置或不可用，请在环境变量中设置 TUSHARE_TOKEN")
+        raise StockScanError(f"Tushare 未配置或不可用（请在环境变量中设置 TUSHARE_TOKEN）")
     
-    try:
-        all_codes = _build_all_market_codes()
-        print(f"[INFO] 全市场扫描启动，代码池共 {len(all_codes)} 只股票...")
+    # ── 获取行情数据 ──
+    all_codes = _build_all_market_codes()
+    print(f"[INFO] 全市场扫描启动，代码池共 {len(all_codes)} 只股票...")
 
-        all_quotes = []
-        batch_size = 80  # Tushre API 单次最大数量
-        total_batches = (len(all_codes) + batch_size - 1) // batch_size
-        success_batches = 0
-        failed_batches = 0
+    all_quotes = []
+    batch_size = 80  # Tushare API 单次最大数量
+    total_batches = (len(all_codes) + batch_size - 1) // batch_size
+    success_batches = 0
+    failed_batches = 0
+    
+    print(f"[INFO] 开始批量获取行情数据，共 {total_batches} 个批次...")
+    
+    for i in range(0, len(all_codes), batch_size):
+        batch = all_codes[i:i + batch_size]
+        batch_num = i // batch_size + 1
         
-        print(f"[INFO] 开始批量获取行情数据，共 {total_batches} 个批次...")
-        
-        for i in range(0, len(all_codes), batch_size):
-            batch = all_codes[i:i + batch_size]
-            batch_num = i // batch_size + 1
-            
-            try:
-                df_rt = ts.get_realtime_quotes(batch)
-                if df_rt is not None and not df_rt.empty:
-                    # 只保留有实际价格的行
-                    df_valid = df_rt[
-                        df_rt['price'].apply(lambda x: str(x).strip() not in ('', '0', '0.00', 'nan'))
-                    ]
-                    if not df_valid.empty:
-                        all_quotes.append(df_valid)
-                        success_batches += 1
+        try:
+            df_rt = ts.get_realtime_quotes(batch)
+            if df_rt is not None and not df_rt.empty:
+                # 只保留有实际价格的行
+                df_valid = df_rt[
+                    df_rt['price'].apply(lambda x: str(x).strip() not in ('', '0', '0.00', 'nan'))
+                ]
+                if not df_valid.empty:
+                    all_quotes.append(df_valid)
+                    success_batches += 1
+                    if batch_num <= 3 or batch_num % 20 == 0:
                         print(f"[进度] 批次 {batch_num}/{total_batches} 成功，获取 {len(df_valid)} 只股票")
-                    else:
-                        failed_batches += 1
                 else:
                     failed_batches += 1
-            except Exception as e:
+            else:
                 failed_batches += 1
+        except Exception as e:
+            failed_batches += 1
+            if batch_num <= 3:
                 print(f"[WARN] 批次 {batch_num}/{total_batches} 失败: {e}")
 
-        if not all_quotes:
-            raise RuntimeError(f"全市场实时行情拉取全部失败！{success_batches} 成功/{failed_batches} 失败")
-        
-        df_all = pd.concat(all_quotes, ignore_index=True)
-        print(f"[INFO] 获取到原始行情 {len(df_all)} 条（{success_batches}/{total_batches} 批次成功）")
+    # 关键：如果全部批次失败，说明网络严重异常，必须抛出异常而非返回空列表
+    if not all_quotes:
+        raise StockScanError(f"全市场实时行情拉取全部失败！{success_batches} 成功/{failed_batches} 失败，请检查网络或 Tushare Token")
+    
+    df_all = pd.concat(all_quotes, ignore_index=True)
+    print(f"[INFO] 获取到原始行情 {len(df_all)} 条（{success_batches}/{total_batches} 批次成功）")
 
-        result = []
-        for _, row in df_all.iterrows():
-            try:
-                code = str(row['code']).zfill(6)
-                name = str(row['name']).strip()
+    result = []
+    for _, row in df_all.iterrows():
+        try:
+            code = str(row['code']).zfill(6)
+            name = str(row['name']).strip()
 
-                # 过滤无名、ST、退市
-                if not name or 'ST' in name or '退' in name or name == 'nan':
-                    continue
-
-                price_str = str(row['price']).strip()
-                pre_close_str = str(row['pre_close']).strip()
-                if not price_str or not pre_close_str:
-                    continue
-
-                current_price = float(price_str)
-                pre_close = float(pre_close_str)
-
-                if current_price <= 0 or pre_close <= 0:
-                    continue
-
-                change_pct = round((current_price - pre_close) / pre_close * 100, 2)
-
-                open_str = str(row.get('open', '0')).strip()
-                high_str = str(row.get('high', '0')).strip()
-                low_str = str(row.get('low', '0')).strip()
-                volume_str = str(row.get('volume', '0')).strip()
-                amount_str = str(row.get('amount', '0')).strip()
-                volume = int(float(volume_str)) if volume_str else 0
-                amount = float(amount_str) if amount_str else 0
-                open_price = float(open_str) if open_str and float(open_str) > 0 else None
-                high_price = float(high_str) if high_str and float(high_str) > 0 else None
-                low_price = float(low_str) if low_str and float(low_str) > 0 else None
-
-                # ── 筛选条件（针对中线策略）──
-                if not (-2 <= change_pct <= 8):      # 排除异常涨跌
-                    continue
-                if current_price < 3 or current_price > 800:  # 价格区间
-                    continue
-                if amount < 5e7:                      # 成交额至少5000万
-                    continue
-
-                result.append({
-                    "code": code,
-                    "name": name,
-                    "current_price": current_price,
-                    "change_pct": change_pct,
-                    "volume": volume,
-                    "amount": amount,
-                    "open_price": open_price,
-                    "high_price": high_price,
-                    "low_price": low_price,
-                })
-            except (ValueError, TypeError):
+            # 过滤无名、ST、退市
+            if not name or 'ST' in name or '退' in name or name == 'nan':
                 continue
 
-        # 随机打乱后排序
-        random.shuffle(result)
-        result.sort(key=lambda x: x["change_pct"], reverse=True)
-        print(f"[INFO] 全市场筛选完成，共 {len(result)} 只候选股票")
-        return result
-    except Exception as e:
-        print(f"[ERROR] 获取股票列表失败: {e}")
-        return []
+            price_str = str(row['price']).strip()
+            pre_close_str = str(row['pre_close']).strip()
+            if not price_str or not pre_close_str:
+                continue
+
+            current_price = float(price_str)
+            pre_close = float(pre_close_str)
+
+            if current_price <= 0 or pre_close <= 0:
+                continue
+
+            change_pct = round((current_price - pre_close) / pre_close * 100, 2)
+
+            open_str = str(row.get('open', '0')).strip()
+            high_str = str(row.get('high', '0')).strip()
+            low_str = str(row.get('low', '0')).strip()
+            volume_str = str(row.get('volume', '0')).strip()
+            amount_str = str(row.get('amount', '0')).strip()
+            volume = int(float(volume_str)) if volume_str else 0
+            amount = float(amount_str) if amount_str else 0
+            open_price = float(open_str) if open_str and float(open_str) > 0 else None
+            high_price = float(high_str) if high_str and float(high_str) > 0 else None
+            low_price = float(low_str) if low_str and float(low_str) > 0 else None
+
+            # ── 筛选条件（针对中线策略）──
+            if not (-2 <= change_pct <= 8):      # 排除异常涨跌
+                continue
+            if current_price < 3 or current_price > 800:  # 价格区间
+                continue
+            if amount < 5e7:                      # 成交额至少5000万
+                continue
+
+            result.append({
+                "code": code,
+                "name": name,
+                "current_price": current_price,
+                "change_pct": change_pct,
+                "volume": volume,
+                "amount": amount,
+                "open_price": open_price,
+                "high_price": high_price,
+                "low_price": low_price,
+            })
+        except (ValueError, TypeError):
+            continue
+
+    # 随机打乱后排序
+    random.shuffle(result)
+    result.sort(key=lambda x: x["change_pct"], reverse=True)
+    print(f"[INFO] 全市场筛选完成，共 {len(result)} 只候选股票")
+    return result
 
 def get_stock_name_tushare(code: str) -> Optional[str]:
     """通过 Tushare 获取股票名称"""
@@ -1192,14 +1200,18 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
         except Exception as e:
             print(f"[WARN] 大盘环境判断失败: {e}")
 
-    stock_list = get_stock_list()
-    if not stock_list:
-        print("[ERROR] 无法获取真实行情数据")
-        # 注意：不清空旧推荐！让用户继续看到之前的推荐结果
-        # 只记录跳过原因，前端会展示提示
-        return {"suggestions": [], "skip_reason": "数据获取失败", "skip_detail": "无法获取市场行情数据（Tushare不可用或网络异常），旧推荐保持不变"}
+    # ── 1. 获取实时行情 ──
+    try:
+        stock_list = get_stock_list()
+    except StockScanError as e:
+        # 数据获取失败：不清空旧推荐，直接返回错误信息
+        print(f"[ERROR] 扫描中止 - 数据获取失败: {e}")
+        return {"suggestions": [], "skip_reason": "数据获取失败", 
+                "skip_detail": str(e),
+                "scan_diagnostic": {"tushare_available": TUSHARE_AVAILABLE,
+                                    "analysis_modules": ANALYSIS_MODULES_AVAILABLE}}
 
-    # ── 先按代码去重 ──
+    # ── 2. 去重 ──
     seen_codes = set()
     deduped = []
     for s in stock_list:

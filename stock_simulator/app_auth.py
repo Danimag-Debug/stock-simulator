@@ -268,8 +268,18 @@ def get_suggestions():
 
 @app.route("/api/scan/status")
 def scan_status_api():
-    """获取扫描状态"""
-    return jsonify(scan_status)
+    """获取扫描状态（含诊断信息）"""
+    status = dict(scan_status)
+    # 添加诊断信息，帮助前端展示更准确的状态
+    try:
+        from engine_db import TUSHARE_AVAILABLE, ANALYSIS_MODULES_AVAILABLE
+        status["diagnostic"] = {
+            "tushare_available": TUSHARE_AVAILABLE,
+            "analysis_modules": ANALYSIS_MODULES_AVAILABLE,
+        }
+    except Exception:
+        pass
+    return jsonify(status)
 
 # ─────────────────────────────────────────────
 # 股票查询（需要登录）
