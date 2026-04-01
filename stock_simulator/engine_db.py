@@ -606,12 +606,22 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
         buy_price, stop_loss, take_profit = technical_analyzer.calc_dynamic_stop_loss(
             hist_data, current_price, total_score
         )
+        # 安全校验：确保 stop_loss < buy_price < take_profit
+        if stop_loss >= buy_price:
+            stop_loss = round(buy_price * 0.95, 2)
+        if take_profit <= buy_price:
+            take_profit = round(buy_price * 1.12, 2)
     else:
         buy_price = round(current_price * 1.001, 2)
-        if low_price and low_price > 0:
-            stop_loss = round(min(low_price * 0.97, current_price * 0.95), 2)
+        # stop_loss 必须小于 buy_price（取5%止损，与 low_price 无关）
+        if low_price and low_price > 0 and low_price < buy_price:
+            # 取近期低点的97%，但不能超过买入价的95%
+            stop_loss = round(min(low_price * 0.97, buy_price * 0.95), 2)
         else:
-            stop_loss = round(current_price * 0.95, 2)
+            stop_loss = round(buy_price * 0.95, 2)
+        # 再次确保 stop_loss < buy_price
+        if stop_loss >= buy_price:
+            stop_loss = round(buy_price * 0.95, 2)
         if total_score >= 78:
             take_profit = round(buy_price * 1.20, 2)
         elif total_score >= 65:
@@ -1134,10 +1144,34 @@ def load_suggestions() -> Dict:
                 for s in suggestions:
                     code = s.get("stock_code", "")
                     if code in price_map:
-                        s["current_price"] = price_map[code]["price"]
+                        new_price = price_map[code]["price"]
+                        s["current_price"] = new_price
                         s["change_pct"] = price_map[code]["change_pct"]
+                        # 先保存旧的买入价/止损/止盈，再更新
+                        old_buy = float(s.get("buy_price") or new_price)
+                        old_stop = float(s.get("stop_loss") or 0)
+                        old_profit = float(s.get("take_profit") or 0)
                         # 同步刷新建议买入价（取实时价微涨0.2%）
-                        s["buy_price"] = round(price_map[code]["price"] * 1.002, 2)
+                        new_buy_price = round(new_price * 1.002, 2)
+                        s["buy_price"] = new_buy_price
+                        # 按止损/止盈的相对比例同步更新（保持盈亏比不变）
+                        if old_buy > 0 and old_stop > 0 and old_stop < old_buy:
+                            stop_ratio = old_stop / old_buy  # 旧止损比例
+                            s["stop_loss"] = round(new_buy_price * stop_ratio, 2)
+                        else:
+                            # 旧数据异常（止损>=买入），用5%止损重置
+                            s["stop_loss"] = round(new_buy_price * 0.95, 2)
+                        if old_buy > 0 and old_profit > 0 and old_profit > old_buy:
+                            profit_ratio = old_profit / old_buy  # 旧止盈比例
+                            s["take_profit"] = round(new_buy_price * profit_ratio, 2)
+                        else:
+                            # 旧数据异常，用12%止盈重置
+                            s["take_profit"] = round(new_buy_price * 1.12, 2)
+                        # 最终安全校验
+                        if s.get("stop_loss", 0) >= new_buy_price:
+                            s["stop_loss"] = round(new_buy_price * 0.95, 2)
+                        if s.get("take_profit", 0) <= new_buy_price:
+                            s["take_profit"] = round(new_buy_price * 1.12, 2)
                 print(f"[INFO] 推荐列表实时价格已刷新，共 {len(price_map)} 只")
         except Exception as e:
             print(f"[WARN] 推荐列表实时价格刷新失败，返回上次扫描价格: {e}")

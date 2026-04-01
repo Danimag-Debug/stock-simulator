@@ -198,15 +198,46 @@ def check_token():
     except jwt.InvalidTokenError:
         return jsonify({"success": False, "message": "Token 无效"}), 401
 
-# 全局推荐数据（无需登录）
+# 全局推荐数据（无需登录，登录后可按个人资金量计算建议）
 @app.route("/api/suggestions")
 def get_suggestions():
-    """获取推荐股票（全局数据）"""
+    """获取推荐股票（全局数据）
+    
+    已登录用户：根据账户资金量重新计算每只股票的建议股数/预估成本
+    未登录用户：使用默认 15 万元资金计算
+    """
     try:
         data = load_suggestions()
+        
+        # 尝试从 Token 中获取用户 ID，按个人资金重新计算建议股数
+        user_capital = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            try:
+                token_data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=[app.config['JWT_ALGORITHM']])
+                user_id = token_data.get('user_id')
+                if user_id:
+                    account = database.get_account(user_id)
+                    # 用可用现金（而非 initial_cash）来计算实际可买入数量
+                    user_capital = account.get("cash", 150000.0)
+            except Exception:
+                pass  # Token 无效或过期，忽略，使用默认值
+        
+        # 若获取到用户资金，动态重算每只推荐股票的建议股数
+        if user_capital is not None and data.get("items"):
+            for item in data["items"]:
+                buy_price = float(item.get("buy_price") or item.get("current_price") or 1.0)
+                position_pct = float(item.get("position_pct") or 0.08)
+                if buy_price > 0:
+                    raw_shares = int(user_capital * position_pct / buy_price // 100 * 100)
+                    shares = max(raw_shares, 100)
+                    item["suggested_shares"] = shares
+                    item["estimated_cost"] = round(shares * buy_price, 2)
+                    item["user_capital"] = round(user_capital, 2)
+        
         return jsonify(data)
     except Exception as e:
-        # 如果真实数据获取失败，返回空数据
         print(f"[ERROR] 获取推荐数据失败: {e}")
         return jsonify({
             "updated_at": None,
@@ -294,10 +325,29 @@ def get_account_info(current_user_id):
         "data": {
             "cash": round(account["cash"], 2),
             "initial_cash": account["initial_cash"],
+            "set_initial_cash": account.get("set_initial_cash", account["initial_cash"]),
             "total_profit": round(account["total_profit"], 2),
             "created_at": account["created_at"]
         }
     })
+
+
+@app.route("/api/account/capital", methods=["PUT"])
+@token_required
+def set_capital(current_user_id):
+    """设置/重置账户初始资金（须无持仓）"""
+    data = request.json
+    if not data or "capital" not in data:
+        return jsonify({"success": False, "message": "请提供 capital 参数"}), 400
+    
+    try:
+        capital = float(data["capital"])
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "message": "capital 必须是数字"}), 400
+    
+    result = database.set_account_capital(current_user_id, capital)
+    status_code = 200 if result["success"] else 400
+    return jsonify(result), status_code
 
 # ─────────────────────────────────────────────
 # 管理功能（公开）

@@ -51,6 +51,7 @@ def init_db():
         user_id INTEGER NOT NULL,
         cash REAL DEFAULT 150000.0,
         initial_cash REAL DEFAULT 150000.0,
+        set_initial_cash REAL DEFAULT 150000.0,
         total_profit REAL DEFAULT 0.0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
@@ -135,6 +136,15 @@ def init_db():
             print(f"[数据库] 已为 suggestions 表添加 {col_name} 列")
         except Exception:
             pass  # 列已存在，忽略
+
+    # 自动迁移：为 accounts 表添加 set_initial_cash 列
+    try:
+        cursor.execute("ALTER TABLE accounts ADD COLUMN set_initial_cash REAL DEFAULT 150000.0")
+        # 用现有 initial_cash 填充旧数据
+        cursor.execute("UPDATE accounts SET set_initial_cash = initial_cash WHERE set_initial_cash IS NULL")
+        print("[数据库] 已为 accounts 表添加 set_initial_cash 列")
+    except Exception:
+        pass  # 列已存在，忽略
     
     # 创建索引
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON accounts(user_id)")
@@ -175,8 +185,8 @@ def create_user(username: str, password: str) -> Optional[int]:
         
         # 创建对应的账户（使用15万元初始资金）
         cursor.execute(
-            "INSERT INTO accounts (user_id, cash, initial_cash) VALUES (?, ?, ?)",
-            (user_id, 150000.0, 150000.0)
+            "INSERT INTO accounts (user_id, cash, initial_cash, set_initial_cash) VALUES (?, ?, ?, ?)",
+            (user_id, 150000.0, 150000.0, 150000.0)
         )
         
         conn.commit()
@@ -219,8 +229,8 @@ def get_account(user_id: int) -> Dict:
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO accounts (user_id, cash, initial_cash) VALUES (?, ?, ?)",
-        (user_id, 150000.0, 150000.0)
+        "INSERT INTO accounts (user_id, cash, initial_cash, set_initial_cash) VALUES (?, ?, ?, ?)",
+        (user_id, 150000.0, 150000.0, 150000.0)
     )
     conn.commit()
     conn.close()
@@ -253,6 +263,42 @@ def update_account(user_id: int, cash: float = None, total_profit: float = None)
         conn.commit()
     
     conn.close()
+
+
+def set_account_capital(user_id: int, new_capital: float) -> Dict:
+    """
+    设置账户初始资金（仅在无持仓、全仓现金时允许重置）
+    
+    Args:
+        user_id: 用户ID
+        new_capital: 新的初始资金金额（1000 ~ 10,000,000）
+    
+    Returns:
+        {"success": bool, "message": str}
+    """
+    if new_capital < 1000 or new_capital > 10_000_000:
+        return {"success": False, "message": "初始资金须在 1,000 至 10,000,000 元之间"}
+    
+    # 检查是否有持仓
+    holdings = get_holdings(user_id)
+    if holdings:
+        return {"success": False, "message": "账户有持仓时无法修改初始资金，请先卖出所有持仓"}
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """UPDATE accounts
+               SET cash = ?, initial_cash = ?, set_initial_cash = ?, total_profit = 0
+               WHERE user_id = ?""",
+            (new_capital, new_capital, new_capital, user_id)
+        )
+        conn.commit()
+        return {"success": True, "message": f"初始资金已更新为 ¥{new_capital:,.0f}"}
+    except Exception as e:
+        return {"success": False, "message": f"更新失败: {str(e)}"}
+    finally:
+        conn.close()
 
 # 持仓管理
 def get_holdings(user_id: int) -> List[Dict]:

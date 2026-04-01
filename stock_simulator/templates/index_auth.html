@@ -534,6 +534,23 @@
     opacity: 0.85;
   }
   
+  /* 资金设置快捷按钮 */
+  .capital-preset {
+    padding: 5px 14px;
+    background: rgba(247,146,57,0.08);
+    border: 1px solid rgba(247,146,57,0.25);
+    border-radius: 16px;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .capital-preset:hover, .capital-preset.active {
+    background: rgba(247,146,57,0.2);
+    border-color: var(--accent);
+  }
+
   /* 响应式 */
   @media (max-width: 1200px) {
     .summary-grid { grid-template-columns: repeat(2, 1fr); }
@@ -584,8 +601,12 @@
           <div class="value" id="total-assets">¥ 0.00</div>
         </div>
         <div class="summary-card">
-          <div class="label">可用现金</div>
+          <div class="label" style="display:flex;align-items:center;justify-content:space-between;">
+            <span>可用现金</span>
+            <button class="btn btn-small" id="btn-set-capital" onclick="showSetCapitalModal()" style="padding:2px 10px;font-size:11px;opacity:0.75;">⚙ 设置资金</button>
+          </div>
           <div class="value" id="cash">¥ 0.00</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;" id="initial-cash-hint"></div>
         </div>
         <div class="summary-card">
           <div class="label">总盈亏</div>
@@ -685,6 +706,53 @@
       <div class="modal-actions">
         <button id="modal-cancel">取消</button>
         <button id="modal-confirm">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置初始资金弹窗 -->
+  <div id="capital-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:10001;align-items:center;justify-content:center;">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px 32px;min-width:320px;max-width:440px;width:90%;">
+      <div style="font-size:18px;font-weight:600;margin-bottom:8px;">⚙ 设置模拟资金</div>
+      <div style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:20px;">
+        根据您的资金量，系统将自动为您计算每只推荐股票的合理买入股数。<br>
+        <span style="color:var(--red);font-size:12px;">⚠ 重置资金会清除累计盈亏记录，且须在无持仓时操作。</span>
+      </div>
+      
+      <!-- 快捷金额按钮 -->
+      <div style="margin-bottom:16px;">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">快速选择</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <button class="capital-preset" data-val="50000" onclick="setCapitalPreset(50000)">5万</button>
+          <button class="capital-preset" data-val="100000" onclick="setCapitalPreset(100000)">10万</button>
+          <button class="capital-preset" data-val="150000" onclick="setCapitalPreset(150000)">15万</button>
+          <button class="capital-preset" data-val="300000" onclick="setCapitalPreset(300000)">30万</button>
+          <button class="capital-preset" data-val="500000" onclick="setCapitalPreset(500000)">50万</button>
+          <button class="capital-preset" data-val="1000000" onclick="setCapitalPreset(1000000)">100万</button>
+        </div>
+      </div>
+      
+      <!-- 自定义输入 -->
+      <div style="margin-bottom:20px;">
+        <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px;">自定义金额（元）</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="color:var(--muted);font-size:16px;">¥</span>
+          <input type="number" id="capital-input" min="1000" max="10000000" step="1000"
+            style="flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:16px;font-weight:600;"
+            placeholder="输入金额" oninput="onCapitalInput()">
+        </div>
+        <div id="capital-input-hint" style="font-size:12px;color:var(--muted);margin-top:6px;">范围：¥1,000 ~ ¥10,000,000</div>
+      </div>
+      
+      <!-- 预览 -->
+      <div id="capital-preview" style="display:none;background:rgba(247,146,57,0.08);border:1px solid rgba(247,146,57,0.2);border-radius:10px;padding:12px 16px;margin-bottom:20px;font-size:13px;">
+        <div style="color:var(--accent);font-weight:600;margin-bottom:6px;">📊 资金规模参考</div>
+        <div id="capital-preview-text" style="color:var(--muted);line-height:1.7;"></div>
+      </div>
+      
+      <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button onclick="hideCapitalModal()" style="padding:8px 20px;background:var(--border);color:var(--text);border:none;border-radius:8px;font-size:14px;cursor:pointer;">取消</button>
+        <button id="capital-confirm-btn" onclick="confirmSetCapital()" style="padding:8px 20px;background:var(--accent);color:white;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">确认设置</button>
       </div>
     </div>
   </div>
@@ -837,7 +905,11 @@
       if (btn) { btn.disabled = true; btn.textContent = '刷新中...'; }
       const grid = document.getElementById('stocks-grid');
       grid.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">⏳ 正在获取实时价格...</div>';
-      fetch(`${API_BASE}/suggestions`)
+      
+      const headers = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      
+      fetch(`${API_BASE}/suggestions`, { headers })
         .then(r => r.json())
         .then(data => {
           renderSuggestions(data);
@@ -851,7 +923,10 @@
 
     // 加载推荐股票
     function loadSuggestions() {
-      fetch(`${API_BASE}/suggestions`)
+      const headers = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      
+      fetch(`${API_BASE}/suggestions`, { headers })
         .then(r => {
           if (!r.ok) {
             throw new Error(`API请求失败: ${r.status}`);
@@ -903,6 +978,9 @@
             const signals = Array.isArray(item.signals) ? item.signals : [];
             const breakdown = item.score_breakdown || {};
             const score = item.score || 0;
+            const suggestedShares = item.suggested_shares || 100;
+            const estimatedCost = item.estimated_cost || (suggestedShares * buyPrice);
+            const userCapital = item.user_capital;  // 后端按用户资金计算时会带入
             
             // 评分颜色：75+红色(强烈推荐), 60+橙色(推荐), 45+黄色(观察)
             const scoreColor = score >= 75 ? '#e63946' : score >= 60 ? '#f79239' : '#8b949e';
@@ -920,6 +998,11 @@
                       <span class="score-val">${v}</span>
                     </div>`).join('')}
                 </div>`
+              : '';
+
+            // 个人化建议文本
+            const capitalHint = userCapital
+              ? `<span style="color:var(--accent);font-size:11px;">按您 ¥${(userCapital/10000).toFixed(1)}万 资金</span>`
               : '';
 
             card.innerHTML = `
@@ -954,11 +1037,20 @@
                 <span>止损: ¥${stopLoss.toFixed(2)}</span>
                 <span>目标: ¥${takeProfit.toFixed(2)}</span>
               </div>
+              <!-- 建议股数（个人化） -->
+              <div style="display:flex;align-items:center;justify-content:space-between;margin:6px 0;padding:6px 10px;background:rgba(247,146,57,0.06);border-radius:8px;border:1px solid rgba(247,146,57,0.15);">
+                <div>
+                  <span style="font-size:12px;color:var(--muted);">建议买入：</span>
+                  <span style="font-size:14px;font-weight:700;color:var(--text);">${suggestedShares} 股</span>
+                  <span style="font-size:12px;color:var(--muted);margin-left:6px;">≈ ¥${estimatedCost.toLocaleString('zh-CN',{maximumFractionDigits:0})}</span>
+                </div>
+                ${capitalHint}
+              </div>
               <div class="stock-tags">
                 ${signals.map(signal => `<span class="tag">${signal}</span>`).join('')}
               </div>
               <div class="stock-actions">
-                <button class="btn btn-buy" data-code="${code}" data-name="${name}" data-shares="${item.suggested_shares || 100}" data-price="${buyPrice}">
+                <button class="btn btn-buy" data-code="${code}" data-name="${name}" data-shares="${suggestedShares}" data-price="${buyPrice}">
                   ${alreadyHolding ? '加仓' : '买入'}
                 </button>
                 <button class="btn btn-secondary btn-detail" style="background:rgba(247,146,57,0.12);border:1px solid rgba(247,146,57,0.3);color:var(--accent);">
@@ -969,7 +1061,7 @@
             
             // 使用事件监听，避免内联 onclick 的 JSON 转义问题
             card.querySelector('.btn-buy').addEventListener('click', function() {
-              doBuy(code, name, item.suggested_shares || 100, buyPrice);
+              doBuy(code, name, suggestedShares, buyPrice);
             });
             
             card.querySelector('.btn-detail').addEventListener('click', function() {
@@ -999,6 +1091,12 @@
             document.getElementById('cash').textContent = '¥ ' + portfolio.cash.toFixed(2);
             document.getElementById('total-profit').textContent = '¥ ' + portfolio.total_profit.toFixed(2);
             document.getElementById('profit-pct').textContent = portfolio.total_profit_pct.toFixed(2) + '%';
+            
+            // 初始资金提示
+            const initCashHint = document.getElementById('initial-cash-hint');
+            if (initCashHint && portfolio.initial_cash) {
+              initCashHint.textContent = `初始资金：¥${portfolio.initial_cash.toLocaleString('zh-CN', {minimumFractionDigits:2})}`;
+            }
             
             // 设置盈亏颜色
             const profitEl = document.getElementById('total-profit');
@@ -1545,6 +1643,127 @@
         toast('扫描触发失败，请稍后重试', 'error');
         loadSuggestions(); // 还原当前推荐
         if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
+      });
+    }
+
+    // ─── 设置初始资金弹窗逻辑 ───
+    
+    function showSetCapitalModal() {
+      const overlay = document.getElementById('capital-modal-overlay');
+      overlay.style.display = 'flex';
+      
+      // 预填当前初始资金
+      authFetch(`${API_BASE}/account`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            const cap = data.data.set_initial_cash || data.data.initial_cash || 150000;
+            document.getElementById('capital-input').value = Math.round(cap);
+            setCapitalPresetHighlight(cap);
+            updateCapitalPreview(cap);
+          }
+        })
+        .catch(() => {});
+      
+      // 点击蒙层关闭
+      overlay.onclick = function(e) {
+        if (e.target === overlay) hideCapitalModal();
+      };
+    }
+    
+    function hideCapitalModal() {
+      document.getElementById('capital-modal-overlay').style.display = 'none';
+    }
+    
+    function setCapitalPreset(val) {
+      document.getElementById('capital-input').value = val;
+      setCapitalPresetHighlight(val);
+      updateCapitalPreview(val);
+    }
+    
+    function setCapitalPresetHighlight(val) {
+      document.querySelectorAll('.capital-preset').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.val) === parseInt(val));
+      });
+    }
+    
+    function onCapitalInput() {
+      const val = parseFloat(document.getElementById('capital-input').value);
+      const hint = document.getElementById('capital-input-hint');
+      if (isNaN(val) || val < 1000 || val > 10000000) {
+        hint.style.color = 'var(--red)';
+        hint.textContent = '⚠ 范围：¥1,000 ~ ¥10,000,000';
+        document.getElementById('capital-confirm-btn').disabled = true;
+        document.getElementById('capital-preview').style.display = 'none';
+      } else {
+        hint.style.color = 'var(--muted)';
+        hint.textContent = '范围：¥1,000 ~ ¥10,000,000';
+        document.getElementById('capital-confirm-btn').disabled = false;
+        setCapitalPresetHighlight(val);
+        updateCapitalPreview(val);
+      }
+    }
+    
+    function updateCapitalPreview(capital) {
+      const preview = document.getElementById('capital-preview');
+      const previewText = document.getElementById('capital-preview-text');
+      if (!capital || capital < 1000) { preview.style.display = 'none'; return; }
+      
+      capital = parseFloat(capital);
+      
+      // 资金规模描述
+      let scale = '';
+      if (capital < 30000) scale = '小额资金（谨慎操作，分散风险）';
+      else if (capital < 100000) scale = '中小资金（单票建议5-8%仓位）';
+      else if (capital < 500000) scale = '中等资金（可适当分散多票持仓）';
+      else if (capital < 1000000) scale = '较大资金（建议组合配置多行业）';
+      else scale = '大资金（建议分批建仓，控制冲击成本）';
+      
+      // 单只股票建议占比的样例（以茅台 ¥1850 为例）
+      const positionPct = capital <= 50000 ? 0.08 : capital <= 200000 ? 0.12 : 0.15;
+      const samplePrice = 1850; // 茅台示例
+      const sampleShares = Math.max(Math.floor(capital * positionPct / samplePrice / 100) * 100, 100);
+      const sampleCost = sampleShares * samplePrice;
+      
+      previewText.innerHTML = `
+        资金规模：<strong style="color:var(--accent)">¥${capital.toLocaleString('zh-CN', {maximumFractionDigits:0})}</strong><br>
+        规模定位：${scale}<br>
+        以贵州茅台(¥${samplePrice})为例，建议买入 <strong>${sampleShares} 股</strong>，约 ¥${sampleCost.toLocaleString('zh-CN', {maximumFractionDigits:0})}
+      `;
+      preview.style.display = 'block';
+    }
+    
+    function confirmSetCapital() {
+      const val = parseFloat(document.getElementById('capital-input').value);
+      if (isNaN(val) || val < 1000 || val > 10000000) {
+        toast('请输入有效的资金金额（1,000 ~ 10,000,000 元）', 'error');
+        return;
+      }
+      
+      const btn = document.getElementById('capital-confirm-btn');
+      btn.disabled = true;
+      btn.textContent = '保存中...';
+      
+      authFetch(`${API_BASE}/account/capital`, {
+        method: 'PUT',
+        body: JSON.stringify({ capital: val })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          toast(data.message, 'success');
+          hideCapitalModal();
+          // 刷新账户信息 & 推荐列表（因资金变了，建议股数需更新）
+          loadPortfolio();
+          loadSuggestions();
+        } else {
+          toast(data.message, 'error');
+        }
+      })
+      .catch(() => toast('设置失败，请稍后重试', 'error'))
+      .finally(() => {
+        btn.disabled = false;
+        btn.textContent = '确认设置';
       });
     }
 
