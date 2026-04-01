@@ -2271,7 +2271,11 @@
                       // 没有summary说明扫描可能异常快速结束（如线程内异常但被catch了）
                       toast('⚠️ 扫描结束但未产出结果（' + elapsedSec + '秒），旧推荐保持不变。Tushare状态：' + (tushareOk ? '正常' : '❌不可用'), 'warning', 8000);
                     } else if (statusData.summary) {
-                      toast('✅ ' + statusData.summary + '（耗时 ' + elapsedSec + '秒）', 'success', 5000);
+                      let summaryMsg = '✅ ' + statusData.summary + '（耗时 ' + elapsedSec + '秒）';
+                      if (!tushareOk) {
+                        summaryMsg += ' ⚠️ 当前使用模拟数据，设置 TUSHARE_TOKEN 可获取真实行情';
+                      }
+                      toast(summaryMsg, 'success', 6000);
                     } else {
                       toast('扫描结束（耗时 ' + elapsedSec + '秒），推荐未变化', 'info', 5000);
                     }
