@@ -49,10 +49,22 @@ def scheduled_scan():
     if scan_status["running"]:
         return
     scan_status["running"] = True
+    scan_status.pop("last_error", None)
+    scan_status.pop("skip_reason", None)
+    scan_status.pop("skip_detail", None)
+    scan_status.pop("summary", None)
     try:
         from datetime import datetime
         scan_status["last_run"] = datetime.now().isoformat()
-        run_stock_scan(top_n=9)
+        result = run_stock_scan(top_n=9)
+        if isinstance(result, dict):
+            if result.get("skip_reason"):
+                scan_status["skip_reason"] = result["skip_reason"]
+                scan_status["skip_detail"] = result.get("skip_detail", "")
+            elif result.get("summary"):
+                scan_status["summary"] = result["summary"]
+    except Exception as e:
+        scan_status["last_error"] = str(e)
     finally:
         scan_status["running"] = False
 
@@ -284,6 +296,27 @@ def query_stock(current_user_id):
         # 停牌股票返回提示
         if result.get("_inactive"):
             return jsonify({"success": False, "message": result.get("inactive_reason", "该股票当前未交易")})
+        
+        # 按用户资金计算建议买入股数（与推荐逻辑一致）
+        try:
+            import database as db
+            conn = db.get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT cash FROM accounts WHERE user_id = ?", (current_user_id,))
+            row = cursor.fetchone()
+            if row:
+                user_cash = row[0]
+                buy_price = result.get("buy_price") or result.get("current_price", 0)
+                position_pct = result.get("position_pct", 0.08)
+                if buy_price > 0 and user_cash > 0:
+                    shares = int(user_cash * position_pct / buy_price // 100 * 100)
+                    shares = max(shares, 100)
+                    result["suggested_shares"] = shares
+                    result["estimated_cost"] = round(shares * buy_price, 2)
+                    result["user_capital"] = user_cash
+        except Exception as e:
+            print(f"[WARN] 查询结果计算建议股数失败: {e}")
+        
         return jsonify({"success": True, "data": result})
     except Exception as e:
         print(f"[ERROR] 股票查询失败: {e}")
@@ -653,10 +686,20 @@ def trigger_scan():
     # 避免前端轮询时线程还未启动就误判为"已完成"
     scan_status["running"] = True
     scan_status.pop("last_error", None)
+    scan_status.pop("skip_reason", None)
+    scan_status.pop("skip_detail", None)
+    scan_status.pop("summary", None)
 
     def run():
         try:
-            run_stock_scan(top_n=9)
+            result = run_stock_scan(top_n=9)
+            # 处理新返回格式 {suggestions, skip_reason, skip_detail, summary}
+            if isinstance(result, dict):
+                if result.get("skip_reason"):
+                    scan_status["skip_reason"] = result["skip_reason"]
+                    scan_status["skip_detail"] = result.get("skip_detail", "")
+                elif result.get("summary"):
+                    scan_status["summary"] = result["summary"]
         except Exception as e:
             print(f"[ERROR] 扫描失败: {e}")
             scan_status["last_error"] = str(e)

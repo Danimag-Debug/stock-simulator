@@ -1188,14 +1188,16 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
             # 暴跌日：停止推荐
             if regime_info["regime"] == "暴跌":
                 print("[大盘环境] 当前为暴跌环境，停止推荐新股票！")
-                return []
+                database.save_suggestions([])  # 清空旧推荐
+                return {"suggestions": [], "skip_reason": "大盘暴跌", "skip_detail": "当前大盘处于暴跌环境，暂停推荐以规避风险"}
         except Exception as e:
             print(f"[WARN] 大盘环境判断失败: {e}")
 
     stock_list = get_stock_list()
     if not stock_list:
         print("[ERROR] 无法获取真实行情数据")
-        return []
+        database.save_suggestions([])  # 清空旧推荐
+        return {"suggestions": [], "skip_reason": "数据获取失败", "skip_detail": "无法获取市场行情数据，请检查网络或稍后重试"}
 
     # ── 先按代码去重 ──
     seen_codes = set()
@@ -1264,6 +1266,13 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
                 print(f"[行业分散] {results_before_diversity} → {len(results)} 只（去除同行业重复）")
         except Exception as e:
             print(f"[WARN] 行业分散度控制失败: {e}")
+
+    # ── 结果为空时：清空旧推荐，返回提示 ──
+    if not results:
+        print("[WARN] 没有股票满足当前评分门槛")
+        database.save_suggestions([])  # 清空旧推荐
+        return {"suggestions": [], "skip_reason": "无满足条件的股票", 
+                "skip_detail": f"评分门槛 {score_threshold} 分（大盘{'弱势' if score_threshold > 50 else '震荡'}），无股票达标"}
 
     # ── 加入随机扰动排序（相同分数区间内保证多样性）──
     for r in results:
@@ -1334,7 +1343,8 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
 
     # 保存到数据库
     database.save_suggestions(suggestions)
-    return suggestions
+    return {"suggestions": suggestions, "skip_reason": None, 
+            "summary": f"扫描完成，共推荐 {len(suggestions)} 只股票"}
 
 def load_suggestions() -> Dict:
     """加载推荐列表，并用实时行情刷新当前价格"""
