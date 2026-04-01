@@ -159,7 +159,7 @@ def _calculate_regime() -> Dict:
         "advance_decline": "分化",
         "description": "无法获取大盘数据，按中性环境处理",
         "position_limit": 0.6,
-        "score_threshold": 50,
+        "score_threshold": 62,
         "advice": "数据获取中，建议谨慎操作"
     }
     
@@ -266,25 +266,25 @@ def _calculate_regime() -> Dict:
     if regime_score >= 70:
         regime = "强势"
         position_limit = 0.8
-        score_threshold = 48
+        score_threshold = 60
         advice = "大盘强势，可积极操作，适当放大仓位"
         description = f"上证{last_close:.0f}点，均线多头排列，成交量放大，市场情绪积极"
     elif regime_score >= 50:
         regime = "震荡"
         position_limit = 0.6
-        score_threshold = 52
-        advice = "大盘震荡，精选个股，控制仓位在60%以内"
-        description = f"上证{last_close:.0f}点，方向不明确，建议精选优质标的"
+        score_threshold = 62
+        advice = "大盘震荡，精选个股，只推荐优质标的，控制仓位在60%以内"
+        description = f"上证{last_close:.0f}点，方向不明确，严格筛选高分优质股票"
     elif regime_score >= 30:
         regime = "弱势"
         position_limit = 0.35
-        score_threshold = 58
+        score_threshold = 68
         advice = "大盘偏弱，收紧选股条件，降低仓位，只做最强个股"
         description = f"上证{last_close:.0f}点，均线偏空，量能不足，谨慎参与"
     else:
         regime = "暴跌"
         position_limit = 0.1
-        score_threshold = 70
+        score_threshold = 75
         advice = "大盘暴跌，停止推荐新股票，建议空仓观望"
         description = f"上证{last_close:.0f}点大幅下跌，系统性风险高，建议观望等待企稳"
     
@@ -292,7 +292,7 @@ def _calculate_regime() -> Dict:
     if sh_change_pct <= -2.0:
         regime = "暴跌"
         position_limit = 0.1
-        score_threshold = 70
+        score_threshold = 75
         advice = "今日大盘暴跌，停止买入，检查持仓止损"
         description = f"上证今日跌{abs(sh_change_pct):.1f}%，系统性风险释放中，不要抄底"
     

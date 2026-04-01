@@ -1177,7 +1177,7 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
     # ── 0. 大盘环境判断（v5.0 新增）──
     regime_info = None
     position_limit = 0.6
-    score_threshold = 50
+    score_threshold = 62  # 默认门槛提升到62，避免低质量股票进入推荐
     if ANALYSIS_MODULES_AVAILABLE:
         try:
             regime_info = market_regime_analyzer.analyze_market_regime()
@@ -1274,9 +1274,9 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
         return {"suggestions": [], "skip_reason": "无满足条件的股票", 
                 "skip_detail": f"评分门槛 {score_threshold} 分（大盘{'弱势' if score_threshold > 50 else '震荡'}），无股票达标"}
 
-    # ── 加入随机扰动排序（相同分数区间内保证多样性）──
+    # ── 按评分严格排序（高分优先，同分之间小随机保证多样性）──
     for r in results:
-        r["_sort_key"] = r["score"] + random.uniform(0, 4)
+        r["_sort_key"] = r["score"] + random.uniform(0, 1.5)
     results.sort(key=lambda x: x["_sort_key"], reverse=True)
     top = results[:top_n]
     for r in top:

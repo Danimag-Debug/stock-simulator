@@ -553,18 +553,25 @@
 
   /* 收藏按钮 */
   .watchlist-btn {
-    background: none;
-    border: none;
+    background: rgba(255, 215, 0, 0.1);
+    border: 1px solid rgba(255, 215, 0, 0.25);
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 20px;
-    padding: 2px 6px;
+    font-size: 18px;
+    padding: 3px 8px;
     line-height: 1;
-    transition: transform 0.2s;
-    opacity: 0.7;
+    transition: all 0.2s;
+    opacity: 1;
+    color: rgba(255, 215, 0, 0.75);
   }
-  .watchlist-btn:hover { transform: scale(1.2); opacity: 1; }
-  .watchlist-btn.active { opacity: 1; }
-  .watchlist-btn.active .wl-icon { filter: drop-shadow(0 0 4px rgba(247,146,57,0.6)); }
+  .watchlist-btn:hover { transform: scale(1.15); background: rgba(255, 215, 0, 0.2); border-color: rgba(255, 215, 0, 0.5); }
+  .watchlist-btn.active {
+    background: rgba(255, 215, 0, 0.2);
+    border-color: rgba(255, 215, 0, 0.5);
+    color: #ffd700;
+    box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
+  }
+  .watchlist-btn.active .wl-icon { filter: drop-shadow(0 0 4px rgba(255, 215, 0, 0.7)); }
 
   /* 收藏列表 */
   .watchlist-table {
