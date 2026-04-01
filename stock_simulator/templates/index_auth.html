@@ -551,6 +551,84 @@
     border-color: var(--accent);
   }
 
+  /* 收藏按钮 */
+  .watchlist-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 2px 4px;
+    line-height: 1;
+    transition: transform 0.2s;
+    opacity: 0.5;
+  }
+  .watchlist-btn:hover { transform: scale(1.2); opacity: 0.8; }
+  .watchlist-btn.active { opacity: 1; }
+  .watchlist-btn.active .wl-icon { filter: drop-shadow(0 0 4px rgba(247,146,57,0.6)); }
+
+  /* 收藏列表 */
+  .watchlist-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .watchlist-table th, .watchlist-table td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .watchlist-table th {
+    background: rgba(48, 54, 61, 0.3);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .watchlist-table tr:last-child td { border-bottom: none; }
+  .watchlist-table tr:hover { background: rgba(48, 54, 61, 0.1); }
+
+  /* 买入手数输入弹窗 */
+  .buy-shares-input {
+    width: 120px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 18px;
+    font-weight: 700;
+    text-align: center;
+  }
+  .buy-shares-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .buy-quick-btns {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .buy-quick-btn {
+    padding: 4px 12px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .buy-quick-btn:hover, .buy-quick-btn.active {
+    background: rgba(247,146,57,0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
   /* 响应式 */
   @media (max-width: 1200px) {
     .summary-grid { grid-template-columns: repeat(2, 1fr); }
@@ -647,6 +725,32 @@
         </div>
         <div class="stocks-grid" id="stocks-grid">
           <!-- 推荐股票卡片会动态插入到这里 -->
+        </div>
+      </div>
+
+      <!-- 我的收藏 -->
+      <div class="section" id="watchlist-section">
+        <div class="section-header">
+          <h2>⭐ 我的收藏</h2>
+          <div class="actions">
+            <button class="btn btn-small" onclick="loadWatchlist()">刷新</button>
+          </div>
+        </div>
+        <div class="watchlist-table-container">
+          <table class="watchlist-table">
+            <thead>
+              <tr>
+                <th>股票</th>
+                <th>现价</th>
+                <th>涨跌幅</th>
+                <th>收藏时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="watchlist-body">
+              <!-- 收藏列表动态插入 -->
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -780,6 +884,7 @@
     const API_BASE = '/api';
     let authToken = null;
     let currentUser = null;
+    let _watchedCodes = {};  // 缓存已收藏的股票代码 {code: true/false}
 
     // 认证相关函数
     function checkAuth() {
@@ -819,6 +924,8 @@
             loadPortfolio();
             loadSuggestions();
             loadLogs();
+            loadWatchlist();
+            loadWatchedCodes();
             updateScanStatus();
             setInterval(updateScanStatus, 10000);
           } else {
@@ -1118,6 +1225,9 @@
               <div style="display:flex;align-items:center;gap:10px;">
                 <span style="font-size:18px;font-weight:700;">${name}</span>
                 <span style="color:var(--muted);font-size:13px;">${code}</span>
+                <button class="watchlist-btn ${_watchedCodes[code] ? 'active' : ''}" data-code="${code}" data-name="${name}" title="${_watchedCodes[code] ? '取消收藏' : '收藏'}" onclick="toggleWatchlist('${code}','${name.replace(/'/g,"\\'")}',this)">
+                  <span class="wl-icon">${_watchedCodes[code] ? '★' : '☆'}</span>
+                </button>
                 <span style="font-size:16px;font-weight:700;color:${changePct>=0?'var(--red)':'var(--green)'}">¥${curPrice.toFixed(2)} ${changePct>=0?'+':''}${changePct.toFixed(2)}%</span>
               </div>
               ${trendDir ? `<span style="font-size:12px;color:var(--muted);margin-top:4px;display:inline-block;">趋势：${trendDir}</span>` : ''}
@@ -1284,7 +1394,12 @@
             card.innerHTML = `
               <div class="stock-header">
                 <div>
-                  <div class="stock-name">${name}</div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="stock-name">${name}</span>
+                    <button class="watchlist-btn ${_watchedCodes[code] ? 'active' : ''}" data-code="${code}" data-name="${name}" title="${_watchedCodes[code] ? '取消收藏' : '收藏'}">
+                      <span class="wl-icon">${_watchedCodes[code] ? '★' : '☆'}</span>
+                    </button>
+                  </div>
                   <div class="stock-code">${code}</div>
                 </div>
                 <div style="text-align:right;">
@@ -1343,6 +1458,15 @@
             card.querySelector('.btn-detail').addEventListener('click', function() {
               showStockDetail(code, item);
             });
+            
+            // 收藏按钮事件
+            const wlBtn = card.querySelector('.watchlist-btn');
+            if (wlBtn) {
+              wlBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                toggleWatchlist(code, name, wlBtn);
+              });
+            }
             
             grid.appendChild(card);
           });
@@ -1488,27 +1612,127 @@
         .catch(() => toast('加载交易记录失败', 'error'));
     }
 
-    // 买入操作
-    function doBuy(code, name, shares, price) {
-      showModal('确认模拟买入',
-        `${name}(${code})\n数量：${shares} 股\n价格：¥${price}\n预计花费：¥${(shares * price).toFixed(2)}`,
-        '确认买入', '#e63946',
-        function() {
-          authFetch(`${API_BASE}/trade/buy`, {
-            method: 'POST',
-            body: JSON.stringify({ code, name, shares, price })
-          })
-          .then(r => r.json())
-          .then(data => {
-            toast(data.message, data.success ? 'success' : 'error');
-            if (data.success) {
-              loadPortfolio();
-              loadLogs();
-              loadSuggestions(); // 刷新推荐（因为持仓状态可能变了）
-            }
-          })
-          .catch(() => toast('买入失败', 'error'));
+    // 买入操作（支持手动输入股数）
+    function doBuy(code, name, suggestedShares, price) {
+      const inputId = 'buy-shares-' + code;
+      const overlayId = 'buy-modal-overlay';
+      
+      // 移除已有弹窗
+      let existing = document.getElementById(overlayId);
+      if (existing) existing.remove();
+
+      const modal = document.createElement('div');
+      modal.id = overlayId;
+      modal.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:10001;align-items:center;justify-content:center;';
+      modal.innerHTML = `
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px 32px;min-width:340px;max-width:440px;width:90%;">
+          <div style="font-size:18px;font-weight:600;margin-bottom:6px;">确认模拟买入</div>
+          <div style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:16px;">
+            ${name}(${code}) · 价格 ¥${price}
+          </div>
+          
+          <div style="margin-bottom:14px;">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">买入数量（须为100的整数倍）</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input type="number" id="${inputId}" class="buy-shares-input" value="${suggestedShares}" min="100" max="1000000" step="100">
+              <span style="color:var(--muted);font-size:14px;">股（${suggestedShares/100}手）</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+              <span style="font-size:11px;color:var(--muted);">系统推荐：</span>
+              <span style="font-size:13px;font-weight:600;color:var(--accent);">${suggestedShares} 股</span>
+              <span style="font-size:11px;color:var(--muted);">≈ ¥${(suggestedShares*price).toLocaleString('zh-CN',{maximumFractionDigits:0})}</span>
+            </div>
+            
+            <!-- 快捷手数按钮 -->
+            <div class="buy-quick-btns">
+              <button class="buy-quick-btn" data-shares="100">1手</button>
+              <button class="buy-quick-btn" data-shares="200">2手</button>
+              <button class="buy-quick-btn" data-shares="500">5手</button>
+              <button class="buy-quick-btn" data-shares="1000">10手</button>
+              <button class="buy-quick-btn active" data-shares="${suggestedShares}">推荐</button>
+            </div>
+          </div>
+          
+          <!-- 预计花费 -->
+          <div id="buy-cost-preview" style="background:rgba(247,146,57,0.08);border:1px solid rgba(247,146,57,0.2);border-radius:10px;padding:12px 16px;margin-bottom:20px;font-size:13px;">
+            <span style="color:var(--accent);font-weight:600;">预计花费：</span>
+            <span style="font-weight:700;font-size:16px;color:var(--text);" id="buy-cost-value">¥${(suggestedShares*price).toLocaleString('zh-CN',{maximumFractionDigits:2})}</span>
+            <span style="color:var(--muted);font-size:11px;margin-left:6px;">（含佣金¥${(suggestedShares*price*0.00025).toFixed(2)}）</span>
+          </div>
+          
+          <div style="display:flex;gap:12px;justify-content:flex-end;">
+            <button id="buy-cancel-btn" style="padding:8px 20px;background:var(--border);color:var(--text);border:none;border-radius:8px;font-size:14px;cursor:pointer;">取消</button>
+            <button id="buy-confirm-btn" style="padding:8px 20px;background:var(--red);color:white;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">确认买入</button>
+          </div>
+        </div>
+      `;
+      
+      // 快捷手数按钮事件（事件委托，避免内联onclick传参问题）
+      modal.querySelectorAll('.buy-quick-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = parseInt(btn.dataset.shares) || 100;
+          const input = modal.querySelector('#' + inputId);
+          if (input) {
+            input.value = val;
+            input.dispatchEvent(new Event('input'));
+          }
+          modal.querySelectorAll('.buy-quick-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
         });
+      });
+      
+      // 取消按钮
+      modal.querySelector('#buy-cancel-btn').addEventListener('click', () => modal.remove());
+      
+      // 监听输入变化，实时更新预览
+      const sharesInput = modal.querySelector('#' + inputId);
+      sharesInput.addEventListener('input', () => {
+        const val = parseInt(sharesInput.value) || 0;
+        const costVal = document.getElementById('buy-cost-value');
+        costVal.textContent = '¥' + (val * price).toLocaleString('zh-CN', {maximumFractionDigits: 2});
+        // 更新快捷按钮高亮
+        modal.querySelectorAll('.buy-quick-btn').forEach(btn => btn.classList.remove('active'));
+      });
+      
+      // 确认买入
+      modal.querySelector('#buy-confirm-btn').addEventListener('click', () => {
+        const shares = parseInt(sharesInput.value);
+        if (!shares || shares < 100 || shares % 100 !== 0) {
+          toast('请输入有效的买入数量（100的整数倍）', 'error');
+          return;
+        }
+        
+        modal.querySelector('#buy-confirm-btn').disabled = true;
+        modal.querySelector('#buy-confirm-btn').textContent = '提交中...';
+        
+        authFetch(`${API_BASE}/trade/buy`, {
+          method: 'POST',
+          body: JSON.stringify({ code, name, shares, price })
+        })
+        .then(r => r.json())
+        .then(data => {
+          toast(data.message, data.success ? 'success' : 'error');
+          if (data.success) {
+            modal.remove();
+            loadPortfolio();
+            loadLogs();
+            loadSuggestions();
+          } else {
+            modal.querySelector('#buy-confirm-btn').disabled = false;
+            modal.querySelector('#buy-confirm-btn').textContent = '确认买入';
+          }
+        })
+        .catch(() => {
+          toast('买入失败', 'error');
+          modal.querySelector('#buy-confirm-btn').disabled = false;
+          modal.querySelector('#buy-confirm-btn').textContent = '确认买入';
+        });
+      });
+      
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+      document.body.appendChild(modal);
     }
 
     // 卖出提示
@@ -1853,7 +2077,7 @@
             
             <!-- 操作按钮 -->
             <div style="display:flex;gap:10px;margin-bottom:4px;">
-              <button class="btn" style="flex:1;" onclick="doBuy('${code}','${name.replace(/'/g,"\\'")}',${item.suggested_shares||100},${buyPrice});document.getElementById('stock-detail-modal').remove();">
+              <button class="btn" style="flex:1;" onclick="doBuy('${code}','${name.replace(/'/g,"\\'")}',${item.suggested_shares||100},${buyPrice})">
                 买入 ${item.suggested_shares||100}股 (¥${((item.suggested_shares||100)*buyPrice).toFixed(0)})
               </button>
               <button class="btn btn-secondary" style="flex:0.4;" onclick="document.getElementById('stock-detail-modal').remove();">取消</button>
@@ -2055,6 +2279,160 @@
         btn.disabled = false;
         btn.textContent = '确认设置';
       });
+    }
+
+    // ─── 收藏功能 ───
+
+    // 加载已收藏的股票代码集合（用于渲染收藏按钮状态）
+    function loadWatchedCodes() {
+      if (!authToken) return;
+      authFetch(`${API_BASE}/watchlist`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && data.items) {
+            _watchedCodes = {};
+            data.items.forEach(item => {
+              _watchedCodes[item.stock_code] = true;
+            });
+          }
+        })
+        .catch(() => {});
+    }
+
+    // 加载收藏列表
+    function loadWatchlist() {
+      if (!authToken) return;
+      authFetch(`${API_BASE}/watchlist`)
+        .then(r => r.json())
+        .then(data => {
+          renderWatchlist(data);
+          // 同步缓存
+          if (data.success && data.items) {
+            _watchedCodes = {};
+            data.items.forEach(item => {
+              _watchedCodes[item.stock_code] = true;
+            });
+          }
+        })
+        .catch(() => {});
+    }
+
+    // 渲染收藏列表
+    function renderWatchlist(data) {
+      const tbody = document.getElementById('watchlist-body');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+
+      if (!data.success || !data.items || data.items.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="5" style="text-align:center;color:var(--muted);padding:40px;">暂无收藏，在推荐或查询中点击 ☆ 即可收藏</td>';
+        tbody.appendChild(row);
+        return;
+      }
+
+      data.items.forEach(item => {
+        const curPrice = item.current_price || 0;
+        const changePct = item.change_pct || 0;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>
+            <div style="font-weight:500;">${item.stock_name}</div>
+            <div style="font-size:12px;color:var(--muted);">${item.stock_code}</div>
+          </td>
+          <td style="font-weight:600;">¥${curPrice.toFixed(2)}</td>
+          <td>
+            <span class="stock-change ${changePct >= 0 ? 'positive' : 'negative'}" style="font-weight:500;">
+              ${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%
+            </span>
+          </td>
+          <td style="font-size:12px;color:var(--muted);">${new Date(item.created_at).toLocaleString('zh-CN')}</td>
+          <td>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-small" onclick="doStockQueryFromWatchlist('${item.stock_code}')">查询评分</button>
+              <button class="btn btn-small btn-secondary" onclick="removeWatchlist('${item.stock_code}','${item.stock_name}')">取消收藏</button>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    // 切换收藏状态
+    function toggleWatchlist(code, name, btnEl) {
+      if (!authToken) return;
+      
+      const isWatched = _watchedCodes[code];
+      
+      if (isWatched) {
+        // 取消收藏
+        authFetch(`${API_BASE}/watchlist`, {
+          method: 'DELETE',
+          body: JSON.stringify({ code })
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            delete _watchedCodes[code];
+            toast('已取消收藏', 'success');
+            if (btnEl) {
+              btnEl.classList.remove('active');
+              btnEl.title = '收藏';
+              btnEl.querySelector('.wl-icon').textContent = '☆';
+            }
+            loadWatchlist(); // 刷新收藏列表
+          } else {
+            toast(data.message, 'error');
+          }
+        })
+        .catch(() => toast('操作失败', 'error'));
+      } else {
+        // 添加收藏
+        authFetch(`${API_BASE}/watchlist`, {
+          method: 'POST',
+          body: JSON.stringify({ code, name })
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            _watchedCodes[code] = true;
+            toast('已收藏 ★', 'success');
+            if (btnEl) {
+              btnEl.classList.add('active');
+              btnEl.title = '取消收藏';
+              btnEl.querySelector('.wl-icon').textContent = '★';
+            }
+            loadWatchlist(); // 刷新收藏列表
+          } else {
+            toast(data.message, 'error');
+          }
+        })
+        .catch(() => toast('操作失败', 'error'));
+      }
+    }
+
+    // 取消收藏（从收藏列表操作）
+    function removeWatchlist(code, name) {
+      authFetch(`${API_BASE}/watchlist`, {
+        method: 'DELETE',
+        body: JSON.stringify({ code })
+      })
+      .then(r => r.json())
+      .then(data => {
+        toast(data.message, data.success ? 'success' : 'error');
+        if (data.success) {
+          delete _watchedCodes[code];
+          loadWatchlist();
+        }
+      })
+      .catch(() => toast('操作失败', 'error'));
+    }
+
+    // 从收藏列表直接查询评分
+    function doStockQueryFromWatchlist(code) {
+      document.getElementById('stock-query-input').value = code;
+      // 滚动到查询区域
+      document.getElementById('stock-query-wrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      doStockQuery();
     }
 
     // 页面加载

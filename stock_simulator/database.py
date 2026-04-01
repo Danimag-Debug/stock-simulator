@@ -179,11 +179,26 @@ def init_db():
     except Exception:
         pass  # 列已存在，忽略
     
+    # 用户收藏表（每用户独立）
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS watchlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        stock_code TEXT NOT NULL,
+        stock_name TEXT NOT NULL,
+        note TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, stock_code),
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )
+    """)
+
     # 创建索引
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON accounts(user_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_holdings_user ON holdings(user_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_user ON trade_logs(user_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_time ON suggestions(updated_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id)")
     
     conn.commit()
     conn.close()
@@ -448,6 +463,66 @@ def get_trade_logs(user_id: int, limit: int = 200) -> List[Dict]:
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+# 收藏管理
+def add_watchlist(user_id: int, stock_code: str, stock_name: str, note: str = "") -> Dict:
+    """添加股票到收藏"""
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT OR IGNORE INTO watchlist (user_id, stock_code, stock_name, note) VALUES (?, ?, ?, ?)",
+            (user_id, stock_code, stock_name, note)
+        )
+        conn.commit()
+        if cursor.rowcount > 0:
+            return {"success": True, "message": f"已收藏 {stock_name}"}
+        else:
+            return {"success": False, "message": f"{stock_name} 已在收藏中"}
+    except Exception as e:
+        return {"success": False, "message": f"收藏失败: {str(e)}"}
+    finally:
+        conn.close()
+
+def remove_watchlist(user_id: int, stock_code: str) -> Dict:
+    """取消收藏"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM watchlist WHERE user_id = ? AND stock_code = ?",
+        (user_id, stock_code)
+    )
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    if deleted > 0:
+        return {"success": True, "message": "已取消收藏"}
+    else:
+        return {"success": False, "message": "该股票未在收藏中"}
+
+def get_watchlist(user_id: int) -> List[Dict]:
+    """获取用户收藏列表"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM watchlist WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def is_in_watchlist(user_id: int, stock_code: str) -> bool:
+    """检查股票是否已收藏"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id FROM watchlist WHERE user_id = ? AND stock_code = ?",
+        (user_id, stock_code)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
 
 # 推荐管理
 def save_suggestions(suggestions: List[Dict]):

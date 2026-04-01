@@ -327,6 +327,120 @@ def search_stock(current_user_id):
         return jsonify({"success": False, "message": f"搜索失败: {str(e)}"}), 500
 
 # ─────────────────────────────────────────────
+# 收藏功能（需要登录）
+# ─────────────────────────────────────────────
+
+@app.route("/api/watchlist", methods=["GET"])
+@token_required
+def get_watchlist(current_user_id):
+    """获取用户收藏列表（附带实时行情）"""
+    try:
+        watchlist = database.get_watchlist(current_user_id)
+        if not watchlist:
+            return jsonify({"success": True, "data": [], "items": []})
+        
+        # 批量获取实时价格
+        codes = [item["stock_code"] for item in watchlist]
+        code_name_map = {item["stock_code"]: item["stock_name"] for item in watchlist}
+        
+        try:
+            from engine_db import _STOCK_NAME_CACHE
+            # 获取实时行情
+            import tushare as ts
+            df = ts.get_realtime_quotes(codes)
+            if df is not None and len(df) > 0:
+                price_map = {}
+                for _, row in df.iterrows():
+                    code = row["code"]
+                    price_map[code] = {
+                        "current_price": float(row["price"]),
+                        "change_pct": round(float(row.get("change", 0)), 2),
+                        "high": float(row.get("high", 0)),
+                        "low": float(row.get("low", 0)),
+                        "open": float(row.get("open", 0)),
+                        "volume": float(row.get("volume", 0)),
+                    }
+                
+                result = []
+                for item in watchlist:
+                    code = item["stock_code"]
+                    info = price_map.get(code, {})
+                    result.append({
+                        "stock_code": code,
+                        "stock_name": item["stock_name"],
+                        "note": item.get("note", ""),
+                        "created_at": item["created_at"],
+                        "current_price": info.get("current_price", 0),
+                        "change_pct": info.get("change_pct", 0),
+                    })
+            else:
+                # 无行情数据，返回基本信息
+                result = [{"stock_code": item["stock_code"], "stock_name": item["stock_name"],
+                           "note": item.get("note", ""), "created_at": item["created_at"],
+                           "current_price": 0, "change_pct": 0} for item in watchlist]
+        except Exception as e:
+            print(f"[ERROR] 获取收藏行情失败: {e}")
+            result = [{"stock_code": item["stock_code"], "stock_name": item["stock_name"],
+                       "note": item.get("note", ""), "created_at": item["created_at"],
+                       "current_price": 0, "change_pct": 0} for item in watchlist]
+        
+        return jsonify({"success": True, "data": result, "items": result})
+    except Exception as e:
+        print(f"[ERROR] 获取收藏列表失败: {e}")
+        return jsonify({"success": True, "data": [], "items": []})
+
+
+@app.route("/api/watchlist", methods=["POST"])
+@token_required
+def add_watchlist(current_user_id):
+    """添加收藏"""
+    data = request.json
+    if not data or 'code' not in data or 'name' not in data:
+        return jsonify({"success": False, "message": "参数不全"}), 400
+    
+    result = database.add_watchlist(
+        user_id=current_user_id,
+        stock_code=data["code"],
+        stock_name=data["name"],
+        note=data.get("note", "")
+    )
+    status_code = 200 if result["success"] else 400
+    return jsonify(result), status_code
+
+
+@app.route("/api/watchlist", methods=["DELETE"])
+@token_required
+def remove_watchlist(current_user_id):
+    """取消收藏"""
+    data = request.json
+    if not data or 'code' not in data:
+        return jsonify({"success": False, "message": "参数不全"}), 400
+    
+    result = database.remove_watchlist(
+        user_id=current_user_id,
+        stock_code=data["code"]
+    )
+    status_code = 200 if result["success"] else 400
+    return jsonify(result), status_code
+
+
+@app.route("/api/watchlist/check", methods=["GET"])
+@token_required
+def check_watchlist(current_user_id):
+    """检查股票是否已收藏（批量）"""
+    codes_str = request.args.get("codes", "")
+    if not codes_str:
+        return jsonify({"success": True, "watched": {}})
+    
+    codes = [c.strip() for c in codes_str.split(",") if c.strip()]
+    watched = {}
+    for code in codes:
+        watched[code] = database.is_in_watchlist(current_user_id, code)
+    
+    return jsonify({"success": True, "watched": watched})
+
+
+# ─────────────────────────────────────────────
 # 需要鉴权的路由（用户私有数据）
 # ─────────────────────────────────────────────
 
