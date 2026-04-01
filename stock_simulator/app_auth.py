@@ -689,22 +689,44 @@ def trigger_scan():
     scan_status.pop("skip_reason", None)
     scan_status.pop("skip_detail", None)
     scan_status.pop("summary", None)
+    scan_status["scan_start"] = datetime.datetime.now().isoformat()
 
     def run():
         try:
+            from engine_db import TUSHARE_AVAILABLE
+            scan_status["_tushare"] = TUSHARE_AVAILABLE
+            print(f"[扫描] 手动扫描线程启动，Tushare可用={TUSHARE_AVAILABLE}")
             result = run_stock_scan(top_n=9)
             # 处理新返回格式 {suggestions, skip_reason, skip_detail, summary}
             if isinstance(result, dict):
                 if result.get("skip_reason"):
                     scan_status["skip_reason"] = result["skip_reason"]
                     scan_status["skip_detail"] = result.get("skip_detail", "")
+                    print(f"[扫描] 扫描跳过: {result['skip_reason']} | {result.get('skip_detail', '')}")
                 elif result.get("summary"):
                     scan_status["summary"] = result["summary"]
+                    scan_status["last_run"] = datetime.datetime.now().isoformat()
+                    print(f"[扫描] 扫描成功: {result['summary']}")
+            elif isinstance(result, list):
+                # 兼容旧格式
+                scan_status["summary"] = f"扫描完成，推荐 {len(result)} 只股票"
+                scan_status["last_run"] = datetime.datetime.now().isoformat()
+                print(f"[扫描] 扫描完成（旧格式），推荐 {len(result)} 只")
+            else:
+                scan_status["skip_reason"] = "扫描返回异常"
+                scan_status["skip_detail"] = f"返回类型: {type(result)}"
+                print(f"[扫描] 扫描返回异常类型: {type(result)}")
         except Exception as e:
+            import traceback
             print(f"[ERROR] 扫描失败: {e}")
+            print(f"[ERROR] 异常堆栈:\n{traceback.format_exc()}")
             scan_status["last_error"] = str(e)
         finally:
             scan_status["running"] = False
+            elapsed = (datetime.datetime.now() - datetime.datetime.fromisoformat(scan_status["scan_start"])).total_seconds()
+            print(f"[扫描] 手动扫描线程结束，耗时 {elapsed:.1f} 秒")
+            scan_status.pop("scan_start", None)
+            scan_status.pop("_tushare", None)
 
     threading.Thread(target=run, daemon=True).start()
     return jsonify({"success": True, "message": "扫描已启动，预计1-3分钟完成"})

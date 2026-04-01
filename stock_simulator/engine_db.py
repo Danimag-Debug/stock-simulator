@@ -312,11 +312,10 @@ def get_stock_list() -> List[Dict]:
     
     # 检查 Tushare 是否可用
     if not TUSHARE_AVAILABLE:
-        print(f"[WARN] Tushare 不可用，无法获取真实行情数据。TUSHARE_AVAILABLE={TUSHARE_AVAILABLE}")
-        # 尝试检查环境变量
+        print(f"[ERROR] Tushare 不可用，无法获取真实行情数据！TUSHARE_AVAILABLE={TUSHARE_AVAILABLE}")
         token_from_env = os.getenv("TUSHARE_TOKEN")
         print(f"[DEBUG] TUSHARE_TOKEN from env: {'已设置' if token_from_env else '未设置'}")
-        return []  # 返回空列表而不是抛异常
+        raise RuntimeError("Tushare 未配置或不可用，请在环境变量中设置 TUSHARE_TOKEN")
     
     try:
         all_codes = _build_all_market_codes()
@@ -1196,8 +1195,9 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
     stock_list = get_stock_list()
     if not stock_list:
         print("[ERROR] 无法获取真实行情数据")
-        database.save_suggestions([])  # 清空旧推荐
-        return {"suggestions": [], "skip_reason": "数据获取失败", "skip_detail": "无法获取市场行情数据，请检查网络或稍后重试"}
+        # 注意：不清空旧推荐！让用户继续看到之前的推荐结果
+        # 只记录跳过原因，前端会展示提示
+        return {"suggestions": [], "skip_reason": "数据获取失败", "skip_detail": "无法获取市场行情数据（Tushare不可用或网络异常），旧推荐保持不变"}
 
     # ── 先按代码去重 ──
     seen_codes = set()
@@ -1267,12 +1267,12 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
         except Exception as e:
             print(f"[WARN] 行业分散度控制失败: {e}")
 
-    # ── 结果为空时：清空旧推荐，返回提示 ──
+    # ── 结果为空时：保留旧推荐，返回提示 ──
     if not results:
         print("[WARN] 没有股票满足当前评分门槛")
-        database.save_suggestions([])  # 清空旧推荐
+        # 注意：不清空旧推荐！让用户继续看到之前的推荐结果
         return {"suggestions": [], "skip_reason": "无满足条件的股票", 
-                "skip_detail": f"评分门槛 {score_threshold} 分（大盘{'弱势' if score_threshold > 50 else '震荡'}），无股票达标"}
+                "skip_detail": f"评分门槛 {score_threshold} 分，当前无股票达标，旧推荐保持不变"}
 
     # ── 按评分严格排序（高分优先，同分之间小随机保证多样性）──
     for r in results:

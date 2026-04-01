@@ -980,7 +980,7 @@
     }
 
     // Toast 提示
-    function toast(message, type = 'info') {
+    function toast(message, type = 'info', duration = 3000) {
       const toast = document.getElementById('toast');
       const toastMessage = document.getElementById('toast-message');
       
@@ -990,7 +990,7 @@
       
       setTimeout(() => {
         toast.classList.remove('show');
-      }, 3000);
+      }, duration);
     }
 
     function hideToast() {
@@ -2199,6 +2199,9 @@
       const btn = document.getElementById('btn-scan');
       if (btn) { btn.disabled = true; btn.textContent = '扫描中...'; }
 
+      // 记录扫描发起时间
+      const scanStartTime = Date.now();
+
       // 显示 loading 占位
       const grid = document.getElementById('stocks-grid');
       grid.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">🔍 全市场扫描中，约需1-3分钟，请稍候...</div>';
@@ -2214,42 +2217,56 @@
           toast('扫描进行中，约需1-3分钟，将自动刷新推荐...', 'info');
           updateScanStatus();
           
-          // 开始轮询扫描状态，直到扫描完成
-          let pollCount = 0;
-          const maxPolls = 60; // 最多轮询60次（5分钟）
-          const pollInterval = setInterval(() => {
-            pollCount++;
-            fetch(`${API_BASE}/scan/status`)
-              .then(r => r.json())
-              .then(statusData => {
-                if (!statusData.running) {
-                  // 扫描已完成
-                  clearInterval(pollInterval);
-                  loadSuggestions();
-                  updateScanStatus();
-                  if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
-                  
-                  // 根据扫描结果显示不同提示
-                  if (statusData.skip_reason) {
-                    toast('⚠️ 扫描未更新：' + (statusData.skip_reason || ''), 'warning');
-                    if (statusData.skip_detail) {
-                      setTimeout(() => toast('📋 ' + statusData.skip_detail, 'info'), 800);
+          // 延迟3秒后开始轮询（避免扫描刚启动就检测到"完成"）
+          setTimeout(() => {
+            let pollCount = 0;
+            const maxPolls = 72; // 最多轮询72次（6分钟）
+            const pollInterval = setInterval(() => {
+              pollCount++;
+              fetch(`${API_BASE}/scan/status`)
+                .then(r => r.json())
+                .then(statusData => {
+                  if (!statusData.running) {
+                    // 扫描已完成
+                    clearInterval(pollInterval);
+                    
+                    // 计算扫描耗时
+                    const elapsedSec = Math.round((Date.now() - scanStartTime) / 1000);
+                    
+                    // 获取旧的 updated_at 用于对比
+                    const oldTimeEl = document.getElementById('scan-time');
+                    const oldUpdatedAt = oldTimeEl ? oldTimeEl.textContent : '';
+                    
+                    // 加载新推荐
+                    loadSuggestions();
+                    updateScanStatus();
+                    if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
+                    
+                    // 根据扫描结果和耗时显示不同提示
+                    if (statusData.skip_reason) {
+                      toast('⚠️ ' + (statusData.skip_reason || '扫描未更新'), 'warning', 5000);
+                      if (statusData.skip_detail) {
+                        setTimeout(() => toast('📋 ' + statusData.skip_detail, 'info', 6000), 800);
+                      }
+                    } else if (statusData.last_error) {
+                      toast('❌ 扫描出错：' + statusData.last_error, 'error', 8000);
+                    } else if (elapsedSec < 15) {
+                      // 扫描结束得太快，可能没有真正执行
+                      toast('⚠️ 扫描异常快速结束（' + elapsedSec + '秒），数据可能未更新，请检查日志', 'warning', 6000);
+                    } else {
+                      toast('✅ ' + (statusData.summary || '扫描完成！推荐已更新') + '（耗时 ' + elapsedSec + '秒）', 'success', 5000);
                     }
-                  } else if (statusData.last_error) {
-                    toast('❌ 扫描出错：' + statusData.last_error, 'error');
-                  } else {
-                    toast('✅ ' + (statusData.summary || '扫描完成！推荐已更新'), 'success');
+                  } else if (pollCount >= maxPolls) {
+                    clearInterval(pollInterval);
+                    toast('扫描超时（6分钟），请手动刷新推荐', 'error');
+                    if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
                   }
-                } else if (pollCount >= maxPolls) {
-                  clearInterval(pollInterval);
-                  toast('扫描超时，请手动刷新推荐', 'error');
-                  if (btn) { btn.disabled = false; btn.textContent = '手动扫描'; }
-                }
-              })
-              .catch(() => {
-                // 网络错误不停止轮询
-              });
-          }, 5000); // 每5秒轮询一次
+                })
+                .catch(() => {
+                  // 网络错误不停止轮询
+                });
+            }, 5000); // 每5秒轮询一次
+          }, 3000); // 首次延迟3秒再开始轮询
           
         } else {
           toast(data.message || '扫描启动失败', 'error');
