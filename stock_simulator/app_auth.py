@@ -279,6 +279,38 @@ def scan_status_api():
         }
     except Exception:
         pass
+    
+    # 添加数据库诊断（每次请求实时查询）
+    try:
+        import sqlite3
+        db_path = database.DATABASE_PATH
+        if db_path and os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            c = conn.cursor()
+            # 表列数
+            c.execute("PRAGMA table_info(suggestions)")
+            col_count = len(c.fetchall())
+            # 推荐数量
+            c.execute("SELECT COUNT(*) FROM suggestions")
+            sug_count = c.fetchone()[0]
+            # 数据库大小
+            db_size = os.path.getsize(db_path)
+            # 检查关键列是否存在
+            c.execute("PRAGMA table_info(suggestions)")
+            col_names = {row[1] for row in c.fetchall()}
+            status["db_diag"] = {
+                "path": db_path,
+                "suggestions_cols": col_count,
+                "suggestions_count": sug_count,
+                "db_size_kb": round(db_size / 1024, 1),
+                "has_updated_at": "updated_at" in col_names,
+                "has_market_regime": "market_regime" in col_names,
+                "has_risk_tags": "risk_tags" in col_names,
+            }
+            conn.close()
+    except Exception as e:
+        status["db_diag"] = {"error": str(e)}
+    
     return jsonify(status)
 
 # ─────────────────────────────────────────────
@@ -745,8 +777,40 @@ def trigger_scan():
 @app.route("/api/health", methods=["GET"])
 def health():
     """健康检查"""
-    # 最简单的健康检查，确保服务正常
-    return jsonify({"status": "ok", "service": "stock-simulator", "timestamp": datetime.datetime.now().isoformat()}), 200
+    # 读取 git commit 信息帮助确认部署版本
+    git_commit = "unknown"
+    try:
+        import subprocess
+        result = subprocess.run(["git", "log", "-1", "--format=%h %s"], 
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            git_commit = result.stdout.strip()[:80]
+    except Exception:
+        pass
+    
+    # 数据库诊断
+    db_ok = False
+    try:
+        import sqlite3
+        db_path = database.DATABASE_PATH
+        if db_path and os.path.exists(db_path):
+            conn = sqlite3.connect(db_path, timeout=5)
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM suggestions")
+            c.fetchone()
+            conn.close()
+            db_ok = True
+    except Exception:
+        pass
+    
+    status_code = 200 if db_ok else 503
+    return jsonify({
+        "status": "ok" if db_ok else "degraded",
+        "service": "stock-simulator",
+        "version": git_commit,
+        "db_ok": db_ok,
+        "timestamp": datetime.datetime.now().isoformat()
+    }), status_code
 
 # 系统初始化状态
 _system_initialized = False

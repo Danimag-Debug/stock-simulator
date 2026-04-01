@@ -165,7 +165,7 @@ def init_db():
         ("market_regime", "TEXT"),
         ("risk_tags", "TEXT"),
         ("opportunity_tags", "TEXT"),
-        ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ("updated_at", "TEXT"),  # SQLite ALTER TABLE 不支持 DEFAULT CURRENT_TIMESTAMP，用 TEXT 类型
     ]
     cursor.execute("PRAGMA table_info(suggestions)")
     existing_cols = {row[1] for row in cursor.fetchall()}
@@ -608,6 +608,8 @@ def save_suggestions(suggestions: List[Dict]):
                  "rsi", "macd", "vol_ratio",
                  "suggested_shares", "estimated_cost", "action", "already_holding"]
     # 可选列（可能不存在于旧数据库）
+    from datetime import datetime as _dt
+    _now_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
     optional_cols = {
         "score_breakdown": lambda s: json.dumps(s.get("score_breakdown", {}), ensure_ascii=False),
         "detail_reasons": lambda s: json.dumps(s.get("detail_reasons", {}), ensure_ascii=False),
@@ -616,6 +618,7 @@ def save_suggestions(suggestions: List[Dict]):
         "market_regime": lambda s: s.get("market_regime", ""),
         "risk_tags": lambda s: json.dumps(s.get("risk_tags", []), ensure_ascii=False),
         "opportunity_tags": lambda s: json.dumps(s.get("opportunity_tags", []), ensure_ascii=False),
+        "updated_at": lambda s: _now_ts,
     }
     
     # 只使用表中存在的列
