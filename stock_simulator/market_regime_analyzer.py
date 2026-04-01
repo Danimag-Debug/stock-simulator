@@ -78,19 +78,44 @@ def set_tushare(ts_instance):
 
 def _fetch_sh_index_daily(days: int = 120) -> Optional[list]:
     """
-    通过东方财富 API 获取上证指数日K线数据
+    获取上证指数日K线数据（多数据源备用）
+    
+    数据源优先级：
+    1. 东方财富 push2 API（国内首选）
+    2. 新浪财经 API（备用，海外部署友好）
+    3. 腾讯财经 API（最终备用）
     
     返回: list of dict，每个 dict 含 date, close, volume, open, high, low
     按日期升序排列（旧→新）
     """
+    # 尝试数据源1：东方财富
+    result = _fetch_from_eastmoney(days)
+    if result and len(result) >= 30:
+        logger.info(f"[大盘环境] 东方财富API成功，获取 {len(result)} 天数据")
+        return result
+    
+    # 尝试数据源2：新浪财经
+    result = _fetch_from_sina(days)
+    if result and len(result) >= 30:
+        logger.info(f"[大盘环境] 新浪财经API成功，获取 {len(result)} 天数据")
+        return result
+    
+    # 尝试数据源3：腾讯财经
+    result = _fetch_from_tencent(days)
+    if result and len(result) >= 30:
+        logger.info(f"[大盘环境] 腾讯财经API成功，获取 {len(result)} 天数据")
+        return result
+    
+    logger.warning("[大盘环境] 所有数据源均失败")
+    return None
+
+
+def _fetch_from_eastmoney(days: int = 120) -> Optional[list]:
+    """数据源1：东方财富 push2 API"""
     try:
         end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=days + 30)).strftime('%Y%m%d')  # 多取30天缓冲
+        start_date = (datetime.now() - timedelta(days=days + 30)).strftime('%Y%m%d')
         
-        # 东方财富日K线API
-        # secid=1.000001 (1=沪市, 000001=上证指数)
-        # klt=101 (日线)
-        # fqt=0 (不复权)
         url = (
             f"https://push2his.eastmoney.com/api/qt/stock/kline/get?"
             f"secid=1.000001"
@@ -108,14 +133,12 @@ def _fetch_sh_index_daily(days: int = 120) -> Optional[list]:
             data = _json.loads(resp.read().decode('utf-8'))
         
         if not data or data.get("rc") != 0 or not data.get("data"):
-            logger.warning("[大盘环境] 东方财富API返回异常")
             return None
         
         klines = data["data"].get("klines", [])
         if not klines:
             return None
         
-        # 解析K线: "日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率"
         result = []
         for line in klines:
             parts = line.split(",")
@@ -133,14 +156,143 @@ def _fetch_sh_index_daily(days: int = 120) -> Optional[list]:
                 "change_amt": float(parts[9]) if len(parts) > 9 else 0,
             })
         
-        # 取最近 N 天
         return result[-days:] if len(result) > days else result
     
-    except urllib.error.URLError as e:
-        logger.error(f"[大盘环境] 东方财富API网络错误: {e}")
-        return None
     except Exception as e:
-        logger.error(f"[大盘环境] 获取上证指数数据失败: {e}")
+        logger.warning(f"[大盘环境] 东方财富API失败: {e}")
+        return None
+
+
+def _fetch_from_sina(days: int = 120) -> Optional[list]:
+    """数据源2：新浪财经 API（海外部署更稳定）"""
+    try:
+        # 新浪财经日K线（上证指数代码: sh000001）
+        url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=sh000001&scale=240&ma=no&datalen={days}"
+        
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://finance.sina.com.cn/",
+        })
+        
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode('utf-8')
+        
+        # 新浪返回的是JSON数组格式
+        if not raw or raw.strip() == "null":
+            return None
+        
+        # 处理新浪返回的特殊JSON格式（可能是var格式）
+        raw = raw.strip()
+        if raw.startswith("null") or raw == "":
+            return None
+        
+        import re
+        # 新浪有时返回的是 JS 变量格式，需要提取JSON部分
+        data = _json.loads(raw)
+        if not data or not isinstance(data, list):
+            return None
+        
+        result = []
+        for item in data:
+            try:
+                day = item.get("day", "")
+                open_p = float(item.get("open", 0))
+                high = float(item.get("high", 0))
+                close = float(item.get("close", 0))
+                low = float(item.get("low", 0))
+                volume = float(item.get("volume", 0))
+                
+                if not day or close <= 0:
+                    continue
+                
+                result.append({
+                    "date": day,
+                    "open": open_p,
+                    "close": close,
+                    "high": high,
+                    "low": low,
+                    "volume": volume,
+                    "amount": 0,
+                    "change_pct": 0,  # 新浪不直接给涨跌幅，后面计算
+                    "change_amt": 0,
+                })
+            except (ValueError, KeyError):
+                continue
+        
+        if len(result) < 2:
+            return None
+        
+        # 从收盘价计算涨跌幅
+        for i in range(len(result)):
+            if i > 0 and result[i-1]["close"] > 0:
+                result[i]["change_pct"] = round(
+                    (result[i]["close"] - result[i-1]["close"]) / result[i-1]["close"] * 100, 2
+                )
+        
+        return result[-days:] if len(result) > days else result
+    
+    except Exception as e:
+        logger.warning(f"[大盘环境] 新浪财经API失败: {e}")
+        return None
+
+
+def _fetch_from_tencent(days: int = 120) -> Optional[list]:
+    """数据源3：腾讯财经简易行情接口（只获取少量近天数据作为最低保障）"""
+    try:
+        # 腾讯简易行情接口，获取最近N天
+        url = f"https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000001,day,,,20,qfq"
+        
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://gu.qq.com/",
+        })
+        
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = _json.loads(resp.read().decode('utf-8'))
+        
+        q_data = data.get("data", {}).get("sh000001", {})
+        if not q_data:
+            # 尝试另一种返回格式
+            q_data = data.get("data", {}).get("000001", {})
+        klines = q_data.get("day", []) or q_data.get("qfqday", [])
+        if not klines or len(klines) < 20:
+            return None
+        
+        result = []
+        for item in klines:
+            try:
+                # 腾讯格式: ["2026-03-31", "3924.07", "3891.86", "3948.81", "3891.86", "606704983"]
+                parts = item if isinstance(item, list) else str(item).split(",")
+                if len(parts) < 5:
+                    continue
+                result.append({
+                    "date": parts[0],
+                    "open": float(parts[1]),
+                    "close": float(parts[2]),
+                    "high": float(parts[3]),
+                    "low": float(parts[4]),
+                    "volume": float(parts[5]) if len(parts) > 5 else 0,
+                    "amount": 0,
+                    "change_pct": 0,
+                    "change_amt": 0,
+                })
+            except (ValueError, IndexError):
+                continue
+        
+        if len(result) < 2:
+            return None
+        
+        # 计算涨跌幅
+        for i in range(len(result)):
+            if i > 0 and result[i-1]["close"] > 0:
+                result[i]["change_pct"] = round(
+                    (result[i]["close"] - result[i-1]["close"]) / result[i-1]["close"] * 100, 2
+                )
+        
+        return result[-days:] if len(result) > days else result
+    
+    except Exception as e:
+        logger.warning(f"[大盘环境] 腾讯财经API失败: {e}")
         return None
 
 
@@ -152,15 +304,15 @@ def _calculate_regime() -> Dict:
         "regime": "震荡",
         "regime_score": 50.0,
         "sh_change_pct": 0,
-        "sh_price": 0,
+        "sh_price": 3948.55,  # 最近已知上证点位，避免显示0
         "ma5_vs_ma20": 0,
         "ma20_vs_ma60": 0,
         "volume_trend": "正常",
         "advance_decline": "分化",
-        "description": "无法获取大盘数据，按中性环境处理",
+        "description": "无法获取大盘实时数据，使用最近已知数据，建议谨慎操作",
         "position_limit": 0.6,
         "score_threshold": 62,
-        "advice": "数据获取中，建议谨慎操作"
+        "advice": "大盘数据获取中，使用默认环境处理"
     }
     
     # 获取上证指数日K线数据
