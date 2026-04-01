@@ -618,6 +618,23 @@
         </div>
       </div>
 
+      <!-- 股票查询 -->
+      <div class="section">
+        <div class="section-header">
+          <h2>🔍 股票查询</h2>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+          <input type="text" id="stock-query-input" placeholder="输入股票代码（如 600519）或名称（如 茅台）"
+            style="flex:1;min-width:240px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;"
+            onkeydown="if(event.key==='Enter')doStockQuery()">
+          <button class="btn" id="btn-stock-query" onclick="doStockQuery()">查询评分</button>
+          <span style="font-size:12px;color:var(--muted);">支持沪深两市全部股票</span>
+        </div>
+        <div id="stock-query-result" style="display:none;">
+          <!-- 查询结果会动态插入到这里 -->
+        </div>
+      </div>
+
       <!-- 推荐股票 -->
       <div class="section">
         <div class="section-header">
@@ -650,6 +667,7 @@
                 <th>现价</th>
                 <th>市值</th>
                 <th>盈亏</th>
+                <th>卖出建议</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -921,6 +939,161 @@
         });
     }
 
+    // ─── 股票查询功能 ───
+    
+    function doStockQuery() {
+      const keyword = document.getElementById('stock-query-input').value.trim();
+      if (!keyword) {
+        toast('请输入股票代码或名称', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('btn-stock-query');
+      const resultDiv = document.getElementById('stock-query-result');
+      btn.disabled = true;
+      btn.textContent = '查询中...';
+      resultDiv.style.display = 'block';
+      resultDiv.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">⏳ 正在分析中，请稍候（约5-10秒）...</div>';
+
+      authFetch(`${API_BASE}/stock/query?keyword=${encodeURIComponent(keyword)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            renderQueryResult(data.data);
+          } else {
+            resultDiv.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted);font-size:14px;">😔 ${data.message}</div>`;
+          }
+        })
+        .catch(() => {
+          resultDiv.innerHTML = '<div style="text-align:center;padding:30px;color:var(--red);">查询失败，请检查网络后重试</div>';
+        })
+        .finally(() => {
+          btn.disabled = false;
+          btn.textContent = '查询评分';
+        });
+    }
+
+    function renderQueryResult(item) {
+      const resultDiv = document.getElementById('stock-query-result');
+      if (!item) {
+        resultDiv.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);">未找到匹配的股票</div>';
+        return;
+      }
+
+      const code = item.code || '';
+      const name = item.name || '未知';
+      const curPrice = parseFloat(item.current_price || 0);
+      const changePct = parseFloat(item.change_pct || 0);
+      const score = parseInt(item.score || 0);
+      const buyPrice = parseFloat(item.buy_price || curPrice);
+      const stopLoss = parseFloat(item.stop_loss || 0);
+      const takeProfit = parseFloat(item.take_profit || 0);
+      const breakdown = item.score_breakdown || {};
+      const detail = item.recommendation_detail || {};
+
+      const scoreColor = score >= 75 ? '#e63946' : score >= 60 ? '#f79239' : score >= 45 ? '#f0a500' : '#8b949e';
+      const scoreLabel = score >= 78 ? 'A+ 强烈推荐' : score >= 65 ? 'A 推荐' : score >= 55 ? 'B 关注' : 'C 观察';
+      const trendDir = detail.trend_direction || '';
+
+      // 维度分数
+      const techScore = breakdown['技术面'] || (detail.technical || {}).score || 0;
+      const fundScore = breakdown['基本面'] || (detail.fundamental || {}).score || 0;
+      const newsScore = breakdown['新闻行业'] || (detail.news_sector || {}).score || 0;
+
+      // 策略
+      const tradePlan = detail.trade_plan || {};
+      const strategyNote = tradePlan.strategy_note || '';
+      const profitPct = tradePlan.profit_target_pct || (((takeProfit - buyPrice) / buyPrice) * 100).toFixed(1);
+      const lossPct = tradePlan.stop_loss_pct || (((buyPrice - stopLoss) / buyPrice) * 100).toFixed(1);
+      const rrRatio = tradePlan.risk_reward_ratio || '--';
+
+      resultDiv.innerHTML = `
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;">
+          <!-- 头部信息 -->
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+            <div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:18px;font-weight:700;">${name}</span>
+                <span style="color:var(--muted);font-size:13px;">${code}</span>
+                <span style="font-size:16px;font-weight:700;color:${changePct>=0?'var(--red)':'var(--green)'}">¥${curPrice.toFixed(2)} ${changePct>=0?'+':''}${changePct.toFixed(2)}%</span>
+              </div>
+              ${trendDir ? `<span style="font-size:12px;color:var(--muted);margin-top:4px;display:inline-block;">趋势：${trendDir}</span>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="text-align:center;">
+                <div style="font-size:11px;color:var(--muted);">综合评分</div>
+                <div style="font-size:28px;font-weight:700;color:${scoreColor};">${score}</div>
+                <div style="font-size:11px;color:${scoreColor};">${scoreLabel}</div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 评分拆分 -->
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px;">
+            <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">📊 技术面</div>
+              <div style="font-size:16px;font-weight:700;color:${techScore>=28?'#e63946':techScore>=18?'#f79239':'#8b949e'};">${techScore}<span style="font-size:11px;color:var(--muted);">/40</span></div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🏢 基本面</div>
+              <div style="font-size:16px;font-weight:700;color:${fundScore>=18?'#e63946':fundScore>=12?'#f79239':'#8b949e'};">${fundScore}<span style="font-size:11px;color:var(--muted);">/25</span></div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">📰 行业情报</div>
+              <div style="font-size:16px;font-weight:700;color:${newsScore>=24?'#e63946':newsScore>=16?'#f79239':'#8b949e'};">${newsScore}<span style="font-size:11px;color:var(--muted);">/35</span></div>
+            </div>
+          </div>
+          
+          <!-- 交易计划 -->
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;">
+            <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:10px;color:var(--muted);">买入价</div>
+              <div style="font-size:14px;font-weight:700;color:var(--green);">¥${buyPrice.toFixed(2)}</div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:10px;color:var(--muted);">止损价</div>
+              <div style="font-size:14px;font-weight:700;color:var(--red);">¥${stopLoss.toFixed(2)}</div>
+              <div style="font-size:10px;color:var(--muted);">-${lossPct}%</div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:10px;color:var(--muted);">目标价</div>
+              <div style="font-size:14px;font-weight:700;color:var(--accent);">¥${takeProfit.toFixed(2)}</div>
+              <div style="font-size:10px;color:var(--muted);">+${profitPct}%</div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-size:10px;color:var(--muted);">盈亏比</div>
+              <div style="font-size:14px;font-weight:700;">${rrRatio}:1</div>
+              <div style="font-size:10px;color:var(--muted);">${strategyNote || ''}</div>
+            </div>
+          </div>
+          
+          <!-- 关键指标 -->
+          <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:12px;">
+            <span>RSI: ${item.rsi ? item.rsi.toFixed(0) : '--'}</span>
+            <span>量比: ${item.vol_ratio ? item.vol_ratio.toFixed(1)+'x' : '--'}</span>
+            <span>建议仓位: ${Math.round((item.position_pct||0.08)*100)}%</span>
+          </div>
+          
+          <!-- 信号标签 -->
+          ${(item.signals && item.signals.length > 0) ? `
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+              ${item.signals.map(s => `<span class="tag">${s}</span>`).join('')}
+            </div>
+          ` : ''}
+          
+          <!-- 操作按钮 -->
+          <div style="display:flex;gap:10px;">
+            <button class="btn" onclick="doBuy('${code}','${name.replace(/'/g,"\\'")}',${item.suggested_shares||100},${buyPrice})">
+              买入 ${item.suggested_shares||100}股 (¥${((item.suggested_shares||100)*buyPrice).toFixed(0)})
+            </button>
+            <button class="btn btn-secondary" onclick="showStockDetail('${code}', ${JSON.stringify(item).replace(/"/g, '&quot;')})">
+              📋 查看完整分析
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
     // 加载推荐股票
     function loadSuggestions() {
       const headers = {};
@@ -1115,10 +1288,17 @@
             
             if (portfolio.holdings.length === 0) {
               const row = document.createElement('tr');
-              row.innerHTML = `<td colspan="7" style="text-align: center; color: var(--muted); padding: 40px;">暂无持仓</td>`;
+              row.innerHTML = `<td colspan="8" style="text-align: center; color: var(--muted); padding: 40px;">暂无持仓</td>`;
               tbody.appendChild(row);
             } else {
               portfolio.holdings.forEach(h => {
+                const adv = h.sell_advice || {};
+                const advAction = adv.action || '--';
+                const advColor = adv.action_color || 'var(--muted)';
+                const advStop = adv.stop_loss ? '¥' + adv.stop_loss.toFixed(2) : '--';
+                const advTarget = adv.target_price ? '¥' + adv.target_price.toFixed(2) : '--';
+                const advRR = adv.risk_reward ? adv.risk_reward + ':1' : '--';
+
                 const row = document.createElement('tr');
                 row.innerHTML = `
                   <td>
@@ -1140,6 +1320,13 @@
                     </div>
                     <div class="${h.profit_pct >= 0 ? 'positive' : 'negative'}" style="font-size: 11px;">
                       ${h.profit_pct >= 0 ? '+' : ''}${h.profit_pct.toFixed(2)}%
+                    </div>
+                  </td>
+                  <td>
+                    <div style="display:flex;flex-direction:column;gap:4px;font-size:11px;min-width:110px;">
+                      <span style="color:${advColor};font-weight:600;font-size:12px;">${advAction}</span>
+                      <span style="color:var(--muted);">止损 <span style="color:var(--red);">${advStop}</span></span>
+                      <span style="color:var(--muted);">目标 <span style="color:var(--accent);">${advTarget}</span></span>
                     </div>
                   </td>
                   <td>

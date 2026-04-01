@@ -1272,7 +1272,7 @@ def execute_sell(user_id: int, code: str, shares: int, price: float) -> Dict:
     return {"success": True, "message": f"成功卖出 {holding['stock_name']}({code}) {shares}股，均价 {price} 元，{profit_str}"}
 
 def get_portfolio_snapshot(user_id: int) -> Dict:
-    """获取用户账户快照（带实时价格）"""
+    """获取用户账户快照（带实时价格 + 卖出建议）"""
     account = database.get_account(user_id)
     holdings = database.get_holdings(user_id)
 
@@ -1292,10 +1292,14 @@ def get_portfolio_snapshot(user_id: int) -> Dict:
                     try:
                         price = float(str(row['price']).strip())
                         pre_close = float(str(row['pre_close']).strip())
+                        high = float(str(row.get('high', '0')).strip())
+                        low = float(str(row.get('low', '0')).strip())
                         if price > 0 and pre_close > 0:
                             real_prices[code] = {
                                 "price": price,
-                                "change_pct": round((price - pre_close) / pre_close * 100, 2)
+                                "change_pct": round((price - pre_close) / pre_close * 100, 2),
+                                "high": high if high > 0 else price,
+                                "low": low if low > 0 else price,
                             }
                     except (ValueError, TypeError):
                         continue
@@ -1305,19 +1309,29 @@ def get_portfolio_snapshot(user_id: int) -> Dict:
     # 计算每个持仓的市值和盈亏
     for holding in holdings:
         code = holding["stock_code"]
-        
+
         # 优先使用实时价格
         if code in real_prices:
             current_price = real_prices[code]["price"]
             change_pct = real_prices[code]["change_pct"]
+            day_high = real_prices[code]["high"]
+            day_low = real_prices[code]["low"]
         else:
             current_price = holding["avg_price"]  # 降级到成本价
             change_pct = 0
-        
+            day_high = current_price
+            day_low = current_price
+
         market_value = holding["shares"] * current_price
         cost_value = holding["shares"] * holding["avg_price"]
         profit = market_value - cost_value
         profit_pct = profit / cost_value * 100 if cost_value > 0 else 0
+
+        # ── 计算卖出建议（动态止损/目标价）──
+        sell_advice = _calc_sell_advice(
+            code, current_price, holding["avg_price"],
+            day_high, day_low, change_pct
+        )
 
         holdings_detail.append({
             "code": code,
@@ -1328,7 +1342,8 @@ def get_portfolio_snapshot(user_id: int) -> Dict:
             "change_pct": change_pct,
             "market_value": round(market_value, 2),
             "profit": round(profit, 2),
-            "profit_pct": round(profit_pct, 2)
+            "profit_pct": round(profit_pct, 2),
+            "sell_advice": sell_advice,
         })
 
         total_market_value += market_value
@@ -1347,6 +1362,113 @@ def get_portfolio_snapshot(user_id: int) -> Dict:
         "snapshot_time": datetime.now().isoformat()
     }
 
+
+def _calc_sell_advice(code: str, current_price: float, avg_price: float,
+                      day_high: float, day_low: float, change_pct: float) -> Dict:
+    """
+    计算持仓股票的卖出建议（动态止损/目标价/操作建议）
+
+    策略：
+    1. 优先用 ATR 动态止损（有历史数据时）
+    2. 降级用基于持仓盈亏的阶梯止损法
+    3. 给出明确的操作建议文字
+    """
+    hold_pct = (current_price - avg_price) / avg_price * 100 if avg_price > 0 else 0
+
+    # ── 尝试 ATR 动态止损 ──
+    atr_stop = None
+    atr_target = None
+    if TUSHARE_AVAILABLE and ANALYSIS_MODULES_AVAILABLE:
+        try:
+            hist = get_hist_data(code, days=30)
+            if hist and len(hist) >= 20:
+                _, _, indicators = technical_analyzer.score_technical_professional(
+                    hist, current_price, change_pct, 0
+                )
+                atr_pct = indicators.get("atr_pct", 0)
+                if atr_pct > 0:
+                    # ATR 止损：现价下方 1.5×ATR
+                    atr_stop = round(current_price * (1 - atr_pct * 1.5 / 100), 2)
+                    # ATR 目标：现价上方 2.5×ATR
+                    atr_target = round(current_price * (1 + atr_pct * 2.5 / 100), 2)
+        except Exception:
+            pass
+
+    # ── 阶梯止损法（降级 / 补充）──
+    if hold_pct >= 20:
+        # 大赚：跟踪止损保住利润（回撤8%就卖）
+        dynamic_stop = round(current_price * 0.92, 2)
+        target_price = round(current_price * 1.15, 2)
+        action = "持有观望"
+        action_color = "#e63946"
+        reason = f"盈利{hold_pct:.1f}%，跟踪止盈中，跌破{dynamic_stop:.2f}考虑止盈"
+    elif hold_pct >= 10:
+        # 中赚：5%跟踪止损
+        dynamic_stop = round(current_price * 0.95, 2)
+        target_price = round(current_price * 1.10, 2)
+        action = "持有止盈"
+        action_color = "#f79239"
+        reason = f"盈利{hold_pct:.1f}%，可继续持有，跌破{dynamic_stop:.2f}止盈离场"
+    elif hold_pct >= 5:
+        # 小赚：回到成本价就平
+        dynamic_stop = round(avg_price * 1.0, 2)
+        target_price = round(avg_price * 1.10, 2)
+        action = "持有"
+        action_color = "#f0a500"
+        reason = f"小幅盈利{hold_pct:.1f}%，回本线{dynamic_stop:.2f}为防守位"
+    elif hold_pct >= -3:
+        # 小亏：放宽止损，给反弹空间
+        dynamic_stop = round(avg_price * 0.92, 2)
+        target_price = round(avg_price * 1.08, 2)
+        action = "持有观望"
+        action_color = "#8b949e"
+        reason = f"浮亏{abs(hold_pct):.1f}%，在{dynamic_stop:.2f}附近止损"
+    elif hold_pct >= -7:
+        # 中亏：严格止损
+        dynamic_stop = round(avg_price * 0.93, 2)
+        target_price = avg_price
+        action = "考虑止损"
+        action_color = "#2a9d8f"
+        reason = f"浮亏{abs(hold_pct):.1f}%，建议关注{dynamic_stop:.2f}止损位"
+    else:
+        # 大亏：建议果断止损
+        dynamic_stop = round(avg_price * 0.95, 2)
+        target_price = avg_price
+        action = "建议止损"
+        action_color = "#e63946"
+        reason = f"浮亏{abs(hold_pct):.1f}%，建议在{dynamic_stop:.2f}附近止损离场"
+
+    # 如果 ATR 止损可用，优先使用
+    if atr_stop is not None:
+        # 取两者中更严格的止损
+        final_stop = max(atr_stop, dynamic_stop) if hold_pct >= 0 else min(atr_stop, dynamic_stop)
+        final_target = atr_target if atr_target and atr_target > current_price else target_price
+    else:
+        final_stop = dynamic_stop
+        final_target = target_price
+
+    # 确保安全关系
+    if final_stop >= current_price:
+        final_stop = round(current_price * 0.95, 2)
+    if final_target <= current_price:
+        final_target = round(current_price * 1.08, 2)
+
+    # 盈亏比
+    upside = (final_target - current_price) / current_price * 100
+    downside = (current_price - final_stop) / current_price * 100
+    rr_ratio = round(upside / downside, 2) if downside > 0 else 0
+
+    return {
+        "action": action,
+        "action_color": action_color,
+        "reason": reason,
+        "stop_loss": final_stop,
+        "target_price": final_target,
+        "upside_pct": round(upside, 1),
+        "downside_pct": round(downside, 1),
+        "risk_reward": rr_ratio,
+    }
+
 def load_account(user_id: int) -> Dict:
     """获取用户账户"""
     return database.get_account(user_id)
@@ -1358,6 +1480,129 @@ def load_trade_log(user_id: int) -> List:
 # ─────────────────────────────────────────────
 # 初始化
 # ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+# 股票查询功能
+# ─────────────────────────────────────────────
+
+def query_stock_score(keyword: str) -> Optional[Dict]:
+    """
+    查询任意股票的评分详情
+    
+    支持两种方式：
+    1. 精确代码匹配（如 600519）
+    2. 名称关键字搜索（如 茅台、比亚迪）
+    
+    流程：
+    1. 先精确匹配6位代码
+    2. 再名称模糊搜索 Tushare 实时行情
+    3. 找到后进行完整评分分析
+    """
+    import pandas as pd
+
+    if not TUSHARE_AVAILABLE:
+        return None
+
+    code = keyword.zfill(6) if keyword.isdigit() and len(keyword) <= 6 else ""
+
+    # ── 步骤1：确定目标股票 ──
+    target_code = None
+    target_name = None
+    target_price = None
+    target_change_pct = None
+
+    if code:
+        # 精确代码查询
+        try:
+            ts_code = f"{code}.SH" if code.startswith("6") else f"{code}.SZ"
+            df = ts.get_realtime_quotes([code])
+            if df is not None and not df.empty:
+                row = df.iloc[0]
+                price_str = str(row.get('price', '0')).strip()
+                if price_str and price_str not in ('', '0', '0.00', 'nan'):
+                    target_price = float(price_str)
+                    pre_close = float(str(row.get('pre_close', '0')).strip())
+                    target_change_pct = round((target_price - pre_close) / pre_close * 100, 2) if pre_close > 0 else 0
+                    target_code = code
+                    target_name = str(row.get('name', '')).strip()
+        except Exception as e:
+            print(f"[WARN] 精确代码查询失败 {code}: {e}")
+
+    if not target_code:
+        # 名称关键字搜索：在模拟股票池中先匹配
+        matched_mock = None
+        for c, n, _ in MOCK_STOCK_DETAILS:
+            if keyword in n:
+                matched_mock = (c, n)
+                break
+        
+        if matched_mock:
+            target_code = matched_mock[0]
+            target_name = matched_mock[1]
+        else:
+            # 在全市场实时行情中搜索（使用 Tushare stock_basic 获取名称映射）
+            try:
+                # 通过 pro 接口搜索
+                pro = ts.pro_api()
+                # 搜索股票名称
+                for market in ['.SH', '.SZ']:
+                    try:
+                        df_basic = pro.stock_basic(
+                            exchange='', market=market[1:],
+                            fields='ts_code,symbol,name,list_status'
+                        )
+                        if df_basic is not None and not df_basic.empty:
+                            df_basic = df_basic[df_basic['list_status'] == 'L']
+                            matched = df_basic[df_basic['name'].str.contains(keyword, na=False)]
+                            if not matched.empty:
+                                ts_code = matched.iloc[0]['ts_code']
+                                target_code = ts_code.split('.')[0]
+                                target_name = matched.iloc[0]['name']
+                                break
+                    except Exception:
+                        continue
+            except Exception as e:
+                print(f"[WARN] 名称搜索失败: {e}")
+
+    if not target_code:
+        return None
+
+    # ── 步骤2：获取实时行情 ──
+    if target_price is None:
+        try:
+            df = ts.get_realtime_quotes([target_code])
+            if df is not None and not df.empty:
+                row = df.iloc[0]
+                price_str = str(row.get('price', '0')).strip()
+                if price_str and price_str not in ('', '0', '0.00', 'nan'):
+                    target_price = float(price_str)
+                    pre_close = float(str(row.get('pre_close', '0')).strip())
+                    target_change_pct = round((target_price - pre_close) / pre_close * 100, 2) if pre_close > 0 else 0
+                    if not target_name:
+                        target_name = str(row.get('name', '')).strip()
+        except Exception as e:
+            print(f"[WARN] 获取行情失败 {target_code}: {e}")
+
+    if not target_price or target_price <= 0:
+        return None
+
+    # ── 步骤3：完整评分分析 ──
+    try:
+        result = score_stock(
+            code=target_code,
+            name=target_name or "未知",
+            current_price=target_price,
+            change_pct=target_change_pct or 0,
+            enable_deep_analysis=ANALYSIS_MODULES_AVAILABLE
+        )
+        if result:
+            result["query_type"] = "code" if code else "name"
+            result["query_keyword"] = keyword
+        return result
+    except Exception as e:
+        print(f"[ERROR] 评分分析失败 {target_code}: {e}")
+        return None
+
 
 def init_system():
     """初始化系统"""

@@ -19,7 +19,8 @@ from functools import wraps
 import database
 from engine_db import (
     run_stock_scan, load_suggestions, get_portfolio_snapshot,
-    execute_buy, execute_sell, load_trade_log, init_system
+    execute_buy, execute_sell, load_trade_log, init_system,
+    query_stock_score
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -248,6 +249,33 @@ def get_suggestions():
 def scan_status_api():
     """获取扫描状态"""
     return jsonify(scan_status)
+
+# ─────────────────────────────────────────────
+# 股票查询（需要登录）
+# ─────────────────────────────────────────────
+
+@app.route("/api/stock/query", methods=["GET"])
+@token_required
+def query_stock(current_user_id):
+    """查询任意股票的评分详情
+    
+    参数：keyword - 股票代码（如 600519）或名称关键字（如 茅台）
+    """
+    keyword = request.args.get("keyword", "").strip()
+    if not keyword:
+        return jsonify({"success": False, "message": "请输入股票代码或名称"}), 400
+    
+    if len(keyword) < 1 or len(keyword) > 20:
+        return jsonify({"success": False, "message": "关键词长度需在 1-20 字符之间"}), 400
+    
+    try:
+        result = query_stock_score(keyword)
+        if result is None:
+            return jsonify({"success": False, "message": f"未找到匹配 '{keyword}' 的股票，请检查代码或名称"})
+        return jsonify({"success": True, "data": result})
+    except Exception as e:
+        print(f"[ERROR] 股票查询失败: {e}")
+        return jsonify({"success": False, "message": f"查询失败: {str(e)}"}), 500
 
 # ─────────────────────────────────────────────
 # 需要鉴权的路由（用户私有数据）
