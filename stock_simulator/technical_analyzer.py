@@ -902,6 +902,27 @@ def score_technical_professional(
     score += volatility_score
     signals.extend(volatility_signals[:1])
     
+    # ═══════════════════════════════════
+    # ⑤ 背离检测（反哺评分）
+    # ═══════════════════════════════════
+    divergence = detect_divergence(data)
+    div_impact = divergence["divergence_score_impact"]
+    if div_impact != 0:
+        score += div_impact
+        signals.extend(divergence["signals"][:2])
+
+    # ═══════════════════════════════════
+    # ⑥ 时间维度因子（连续阳线/缩量等）
+    # ═══════════════════════════════════
+    time_factors = calc_time_factors(data, current_price)
+    time_impact = time_factors["time_score_impact"]
+    if time_impact != 0:
+        score += time_impact
+        # 只添加最重要的时间信号
+        for sig in time_factors["signals"][:1]:
+            if sig not in signals:
+                signals.append(sig)
+
     # ── 汇总关键指标 ──
     indicators = {
         "rsi": rsi,
@@ -923,16 +944,33 @@ def score_technical_professional(
         "ma60": ma60,
         "vwap": vwap,
         "obv_trend": "上升" if (obv and len(data) >= 5 and obv > data[-5].get("obv", obv)) else "下降",
+        # 新增指标
+        "divergence": {
+            "macd_top": divergence["macd_top_divergence"],
+            "macd_bottom": divergence["macd_bottom_divergence"],
+            "rsi_top": divergence["rsi_top_divergence"],
+            "rsi_bottom": divergence["rsi_bottom_divergence"],
+            "impact": div_impact,
+        },
+        "time_factors": {
+            "consecutive_green": time_factors["consecutive_green"],
+            "consecutive_red": time_factors["consecutive_red"],
+            "new_high_breakout": time_factors["new_high_breakout"],
+            "max_drawdown_5d": time_factors["max_drawdown_5d"],
+            "impact": time_impact,
+        },
         "score_breakdown": {
             "趋势": trend_score,
             "动量": momentum_score,
             "量价": volume_score,
-            "波动": volatility_score
+            "波动": volatility_score,
+            "背离": div_impact,
+            "时间": time_impact,
         }
     }
     
     total_score = max(0, min(score, 40))
-    return total_score, signals[:6], indicators
+    return total_score, signals[:8], indicators
 
 
 def _score_technical_simple(current_price: float, change_pct: float, amount: float) -> Tuple[int, List[str], Dict]:
@@ -986,23 +1024,400 @@ def _score_technical_simple(current_price: float, change_pct: float, amount: flo
     }
 
 
+# ─────────────────────────────────────────────
+# 支撑位/压力位识别
+# ─────────────────────────────────────────────
+
+def identify_support_resistance(data: List[Dict], current_price: float) -> Dict:
+    """
+    识别近60日的关键支撑位和压力位
+    
+    原理：
+    - 支撑位 = 前期低点聚集区域（多个低点在同一价格区间）
+    - 压力位 = 前期高点聚集区域
+    - 密集成交区 = 低波动横盘区（未来成为支撑/压力）
+    
+    返回:
+    {
+        "support_levels": [(price, strength), ...],  # 支撑位列表
+        "resistance_levels": [(price, strength), ...],  # 压力位列表
+        "nearest_support": float,   # 最近支撑位
+        "nearest_resistance": float,  # 最近压力位
+        "support_distance_pct": float,  # 到最近支撑位的距离%
+        "resistance_distance_pct": float,  # 到最近压力位的距离%
+    }
+    """
+    if not data or len(data) < 20:
+        return {
+            "support_levels": [], "resistance_levels": [],
+            "nearest_support": round(current_price * 0.95, 2),
+            "nearest_resistance": round(current_price * 1.08, 2),
+            "support_distance_pct": 5.0, "resistance_distance_pct": 8.0,
+        }
+    
+    recent = data[-60:] if len(data) >= 60 else data
+    lows = [d["low"] for d in recent]
+    highs = [d["high"] for d in recent]
+    
+    # 寻找局部极值点（波峰/波谷）
+    local_lows = []  # (index, price)
+    local_highs = []
+    
+    for i in range(2, len(recent) - 2):
+        # 局部低点：前后都比它高
+        if recent[i]["low"] <= recent[i-1]["low"] and recent[i]["low"] <= recent[i-2]["low"] and \
+           recent[i]["low"] <= recent[i+1]["low"] and recent[i]["low"] <= recent[i+2]["low"]:
+            local_lows.append((i, recent[i]["low"]))
+        
+        # 局部高点：前后都比它低
+        if recent[i]["high"] >= recent[i-1]["high"] and recent[i]["high"] >= recent[i-2]["high"] and \
+           recent[i]["high"] >= recent[i+1]["high"] and recent[i]["high"] >= recent[i+2]["high"]:
+            local_highs.append((i, recent[i]["high"]))
+    
+    # 将相近价格的极值聚类（±1.5%范围内算同一价位）
+    def cluster_levels(levels: List[Tuple[int, float]], threshold: float = 0.015) -> List[Tuple[float, int]]:
+        """将相近的价格聚类，返回 [(平均价格, 出现次数), ...]"""
+        if not levels:
+            return []
+        
+        # 按价格排序
+        sorted_levels = sorted(levels, key=lambda x: x[1])
+        clusters = []
+        
+        for _, price in sorted_levels:
+            merged = False
+            for i, (avg, count) in enumerate(clusters):
+                if abs(price - avg) / avg <= threshold:
+                    # 合入已有簇
+                    new_avg = (avg * count + price) / (count + 1)
+                    clusters[i] = (new_avg, count + 1)
+                    merged = True
+                    break
+            if not merged:
+                clusters.append((price, 1))
+        
+        # 按出现次数排序（次数越多=越重要）
+        clusters.sort(key=lambda x: x[1], reverse=True)
+        return clusters
+    
+    support_clusters = cluster_levels(local_lows)
+    resistance_clusters = cluster_levels(local_highs)
+    
+    # 筛选低于当前价的支撑位和高于当前价的压力位
+    support_below = [(p, c) for p, c in support_clusters if p < current_price * 0.98]
+    resistance_above = [(p, c) for p, c in resistance_clusters if p > current_price * 1.02]
+    
+    # 最近支撑位 = 低于当前价且距离最近的
+    nearest_support = round(current_price * 0.95, 2)
+    if support_below:
+        # 取最高的支撑位（离当前价最近）
+        nearest_support = round(max(support_below, key=lambda x: x[0])[0], 2)
+    
+    # 最近压力位 = 高于当前价且距离最近的
+    nearest_resistance = round(current_price * 1.08, 2)
+    if resistance_above:
+        nearest_resistance = round(min(resistance_above, key=lambda x: x[0])[0], 2)
+    
+    # 距离百分比
+    support_distance_pct = round((current_price - nearest_support) / current_price * 100, 1) if current_price > 0 else 5.0
+    resistance_distance_pct = round((nearest_resistance - current_price) / current_price * 100, 1) if current_price > 0 else 8.0
+    
+    return {
+        "support_levels": [(round(p, 2), c) for p, c in support_below[:3]],
+        "resistance_levels": [(round(p, 2), c) for p, c in resistance_above[:3]],
+        "nearest_support": nearest_support,
+        "nearest_resistance": nearest_resistance,
+        "support_distance_pct": support_distance_pct,
+        "resistance_distance_pct": resistance_distance_pct,
+    }
+
+
+# ─────────────────────────────────────────────
+# 顶底背离检测 + 反哺评分
+# ─────────────────────────────────────────────
+
+def detect_divergence(data: List[Dict]) -> Dict:
+    """
+    检测 MACD / RSI 顶底背离
+    
+    顶背离：价格创新高，但 MACD/RSI 没有创新高 → 看空信号
+    底背离：价格创新低，但 MACD/RSI 没有创新低 → 看多信号
+    
+    返回:
+    {
+        "macd_top_divergence": bool,     # MACD顶背离
+        "macd_bottom_divergence": bool,  # MACD底背离
+        "rsi_top_divergence": bool,      # RSI顶背离
+        "rsi_bottom_divergence": bool,   # RSI底背离
+        "divergence_score_impact": int,  # 对评分的影响（正=利好，负=利空）
+        "signals": list,                 # 背离信号文字描述
+    }
+    """
+    result = {
+        "macd_top_divergence": False,
+        "macd_bottom_divergence": False,
+        "rsi_top_divergence": False,
+        "rsi_bottom_divergence": False,
+        "divergence_score_impact": 0,
+        "signals": [],
+    }
+    
+    if not data or len(data) < 30:
+        return result
+    
+    recent = data[-30:]
+    closes = [d["close"] for d in recent]
+    macd_vals = [d.get("macd", 0) for d in recent]
+    rsi_vals = [d.get("rsi", 50) for d in recent]
+    
+    def find_peaks(arr, window=3):
+        """找局部峰值"""
+        peaks = []
+        for i in range(window, len(arr) - window):
+            is_peak = True
+            for j in range(i - window, i + window + 1):
+                if j != i and arr[j] >= arr[i]:
+                    is_peak = False
+                    break
+            if is_peak:
+                peaks.append((i, arr[i]))
+        return peaks
+    
+    def find_troughs(arr, window=3):
+        """找局部谷值"""
+        troughs = []
+        for i in range(window, len(arr) - window):
+            is_trough = True
+            for j in range(i - window, i + window + 1):
+                if j != i and arr[j] <= arr[i]:
+                    is_trough = False
+                    break
+            if is_trough:
+                troughs.append((i, arr[i]))
+        return troughs
+    
+    # MACD 背离检测
+    price_highs = find_peaks(closes)
+    macd_highs = find_peaks(macd_vals)
+    
+    if len(price_highs) >= 2:
+        # 价格高点是否创新高
+        last_price_high = price_highs[-1][1]
+        prev_price_high = price_highs[-2][1]
+        price_new_high = last_price_high > prev_price_high
+        
+        if price_new_high and len(macd_highs) >= 2:
+            last_macd_high = macd_highs[-1][1]
+            prev_macd_high = macd_highs[-2][1]
+            if last_macd_high < prev_macd_high:
+                result["macd_top_divergence"] = True
+                result["signals"].append("MACD顶背离(价格新高指标不新高,危险)")
+    
+    price_lows = find_troughs(closes)
+    macd_lows = find_troughs(macd_vals)
+    
+    if len(price_lows) >= 2:
+        last_price_low = price_lows[-1][1]
+        prev_price_low = price_lows[-2][1]
+        price_new_low = last_price_low < prev_price_low
+        
+        if price_new_low and len(macd_lows) >= 2:
+            last_macd_low = macd_lows[-1][1]
+            prev_macd_low = macd_lows[-2][1]
+            if last_macd_low > prev_macd_low:
+                result["macd_bottom_divergence"] = True
+                result["signals"].append("MACD底背离(价格新低指标不新低,机会)")
+    
+    # RSI 背离检测（同理）
+    rsi_highs = find_peaks(rsi_vals)
+    if len(price_highs) >= 2 and len(rsi_highs) >= 2:
+        if price_highs[-1][1] > price_highs[-2][1]:
+            if rsi_highs[-1][1] < rsi_highs[-2][1]:
+                result["rsi_top_divergence"] = True
+                result["signals"].append("RSI顶背离(动量减弱)")
+    
+    rsi_lows = find_troughs(rsi_vals)
+    if len(price_lows) >= 2 and len(rsi_lows) >= 2:
+        if price_lows[-1][1] < price_lows[-2][1]:
+            if rsi_lows[-1][1] > rsi_lows[-2][1]:
+                result["rsi_bottom_divergence"] = True
+                result["signals"].append("RSI底背离(反弹信号)")
+    
+    # 计算对评分的影响
+    impact = 0
+    if result["macd_top_divergence"]:
+        impact -= 6  # 顶背离扣6分
+    if result["rsi_top_divergence"]:
+        impact -= 3  # RSI顶背离扣3分
+    if result["macd_bottom_divergence"]:
+        impact += 5  # 底背离加5分
+    if result["rsi_bottom_divergence"]:
+        impact += 3  # RSI底背离加3分
+    
+    result["divergence_score_impact"] = impact
+    return result
+
+
+# ─────────────────────────────────────────────
+# 时间维度因子
+# ─────────────────────────────────────────────
+
+def calc_time_factors(data: List[Dict], current_price: float) -> Dict:
+    """
+    计算时间维度因子（连续K线形态、变盘信号等）
+    
+    时间维度因子是实战中非常有价值的信号：
+    - 连续N天阳线 = 强趋势确认
+    - 连续缩量N天 = 变盘前兆
+    - 突破前高 = 打开上涨空间
+    - N日内最大回撤 = 风险控制
+    
+    返回:
+    {
+        "consecutive_green": int,    # 连续阳线天数
+        "consecutive_red": int,      # 连续阴线天数
+        "consecutive_shrink_vol": int,  # 连续缩量天数
+        "new_high_breakout": bool,   # 是否突破近期新高
+        "new_low_breakdown": bool,   # 是否跌破近期新低
+        "max_drawdown_5d": float,    # 5日最大回撤%
+        "max_drawdown_10d": float,   # 10日最大回撤%
+        "time_score_impact": int,    # 对评分的影响
+        "signals": list,
+    }
+    """
+    result = {
+        "consecutive_green": 0,
+        "consecutive_red": 0,
+        "consecutive_shrink_vol": 0,
+        "new_high_breakout": False,
+        "new_low_breakdown": False,
+        "max_drawdown_5d": 0,
+        "max_drawdown_10d": 0,
+        "time_score_impact": 0,
+        "signals": [],
+    }
+    
+    if not data or len(data) < 10:
+        return result
+    
+    # 连续阳线/阴线统计（从最新数据往前数）
+    consecutive_green = 0
+    consecutive_red = 0
+    for d in reversed(data):
+        if d["close"] > d["open"]:
+            if consecutive_red == 0:
+                consecutive_green += 1
+            else:
+                break
+        elif d["close"] < d["open"]:
+            if consecutive_green == 0:
+                consecutive_red += 1
+            else:
+                break
+        else:
+            break
+    
+    result["consecutive_green"] = consecutive_green
+    result["consecutive_red"] = consecutive_red
+    
+    # 连续缩量统计
+    consecutive_shrink = 0
+    for i in range(len(data) - 1, max(len(data) - 10, 0), -1):
+        if i > 0 and data[i]["volume"] < data[i-1]["volume"]:
+            consecutive_shrink += 1
+        else:
+            break
+    result["consecutive_shrink_vol"] = consecutive_shrink
+    
+    # 突破近20日新高
+    recent_20 = data[-21:-1] if len(data) >= 21 else data[:-1]
+    if recent_20:
+        high_20 = max(d["high"] for d in recent_20)
+        if current_price > high_20:
+            result["new_high_breakout"] = True
+            result["signals"].append(f"突破20日新高({high_20:.2f})")
+    
+    # 跌破近20日新低
+    low_20 = min(d["low"] for d in recent_20) if recent_20 else current_price
+    if current_price < low_20:
+        result["new_low_breakdown"] = True
+        result["signals"].append(f"跌破20日新低({low_20:.2f})")
+    
+    # N日最大回撤
+    lookback_5 = data[-6:] if len(data) >= 6 else data
+    lookback_10 = data[-11:] if len(data) >= 11 else data
+    
+    for lookback, key in [(lookback_5, "max_drawdown_5d"), (lookback_10, "max_drawdown_10d")]:
+        if len(lookback) >= 2:
+            peak = max(d["high"] for d in lookback)
+            trough = min(d["low"] for d in lookback)
+            dd = round((peak - trough) / peak * 100, 1) if peak > 0 else 0
+            result[key] = dd
+    
+    # 计算评分影响
+    impact = 0
+    
+    # 连续阳线加分
+    if consecutive_green >= 5:
+        impact += 4
+        result["signals"].append(f"五连阳以上(强势趋势)")
+    elif consecutive_green >= 3:
+        impact += 3
+        result["signals"].append(f"三连阳(趋势向好)")
+    elif consecutive_green == 2:
+        impact += 1
+    
+    # 连续阴线减分
+    if consecutive_red >= 5:
+        impact -= 5
+        result["signals"].append(f"五连阴以上(弱势下跌)")
+    elif consecutive_red >= 3:
+        impact -= 3
+        result["signals"].append(f"三连阴(趋势走弱)")
+    
+    # 连续缩量（变盘前兆，中性偏正）
+    if consecutive_shrink >= 4:
+        impact += 1
+        result["signals"].append(f"连续{consecutive_shrink}日缩量(变盘在即)")
+    
+    # 新高突破加分
+    if result["new_high_breakout"]:
+        impact += 3
+    
+    # 新低跌破减分
+    if result["new_low_breakdown"]:
+        impact -= 4
+    
+    # 回撤过大减分
+    if result["max_drawdown_5d"] > 8:
+        impact -= 2
+    
+    result["time_score_impact"] = impact
+    return result
+
+
 def calc_dynamic_stop_loss(data: List[Dict], current_price: float, score: int) -> Tuple[float, float, float]:
     """
-    基于ATR的动态止损止盈计算
-    专业交易员常用: 止损=1.5*ATR, 止盈=2.5~3*ATR
-    
+    基于ATR + 支撑/压力位的动态止损止盈计算
+    专业交易员常用: 止损=1.5*ATR，结合支撑位修正
+
     返回: (买入价, 止损价, 止盈价)
     """
     buy_price = round(current_price * 1.001, 2)  # 微高于市价入场
-    
+
     if data and len(data) >= 14:
         last = data[-1]
         atr = last.get("atr")
-        
+
+        # 获取支撑位/压力位
+        sr = identify_support_resistance(data, current_price)
+        nearest_support = sr.get("nearest_support", 0)
+        nearest_resistance = sr.get("nearest_resistance", 0)
+
         if atr and atr > 0:
             # ATR止损：1.5倍ATR（专业方法）
             atr_stop = buy_price - 1.5 * atr
-            
+
             # 结合评分的止盈倍数
             if score >= 75:
                 take_mult = 3.0   # 高分股，追求更高收益
@@ -1010,15 +1425,30 @@ def calc_dynamic_stop_loss(data: List[Dict], current_price: float, score: int) -
                 take_mult = 2.5
             else:
                 take_mult = 2.0
-            
+
             atr_take = buy_price + take_mult * atr
-            
-            # 止损不超过5%（防止ATR过大）
-            max_stop = buy_price * 0.95
-            stop_loss = max(atr_stop, max_stop)
-            
-            return buy_price, round(stop_loss, 2), round(atr_take, 2)
-    
+
+            # 支撑位修正止损：如果有有效支撑位，止损放在支撑位下方1%
+            if nearest_support and nearest_support < buy_price * 0.97:
+                support_stop = nearest_support * 0.99
+                stop_loss = max(atr_stop, support_stop)
+            else:
+                stop_loss = atr_stop
+
+            # 压力位修正止盈：如果有有效压力位且合理
+            if nearest_resistance and nearest_resistance > buy_price * 1.03:
+                pressure_take = nearest_resistance * 0.99
+                take_profit = min(atr_take, pressure_take)
+                take_profit = max(take_profit, buy_price * 1.05)
+            else:
+                take_profit = atr_take
+
+            # 止损不超过7%（防止ATR过大）
+            max_stop = buy_price * 0.93
+            stop_loss = max(stop_loss, max_stop)
+
+            return buy_price, round(stop_loss, 2), round(take_profit, 2)
+
     # 降级：固定比例
     if score >= 75:
         stop_pct, take_pct = 0.05, 0.20
@@ -1026,5 +1456,5 @@ def calc_dynamic_stop_loss(data: List[Dict], current_price: float, score: int) -
         stop_pct, take_pct = 0.05, 0.15
     else:
         stop_pct, take_pct = 0.05, 0.10
-    
+
     return buy_price, round(buy_price * (1 - stop_pct), 2), round(buy_price * (1 + take_pct), 2)

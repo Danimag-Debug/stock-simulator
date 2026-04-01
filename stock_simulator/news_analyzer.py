@@ -294,10 +294,15 @@ def _fetch_money_flow(code: str) -> Optional[Dict]:
     return None
 
 
-def analyze_sentiment(titles: List[str]) -> Tuple[float, List[str]]:
+def analyze_sentiment(titles: List[str], price_position: str = "neutral") -> Tuple[float, List[str]]:
     """
     分析公告/新闻标题情绪
     返回：(情绪分 -1到+1, 匹配到的关键信号)
+    
+    v2.1 新增：位置上下文
+    - price_position: "high"(高位), "low"(低位), "neutral"(中性)
+    高位利好 = 利好兑现（出货信号），权重降低
+    低位利空 = 利空出尽（洗盘结束），权重降低
     """
     score = 0.0
     signals = []
@@ -324,6 +329,22 @@ def analyze_sentiment(titles: List[str]) -> Tuple[float, List[str]]:
     for kw in BEARISH_KEYWORDS:
         if kw in all_text and kw not in STRONG_BEARISH:
             score -= 0.18
+    
+    # ── 位置上下文调整（v2.1 新增）──
+    if price_position == "high" and score > 0.2:
+        # 高位利好 → 利好兑现，打折
+        score *= 0.5
+        signals.append("⚠️高位利好(利好兑现风险)")
+    elif price_position == "low" and score < -0.2:
+        # 低位利空 → 利空出尽，打折
+        score *= 0.5
+        signals.append("📊低位利空(利空出尽可能反弹)")
+    elif price_position == "high" and score < -0.2:
+        # 高位利空 → 放大利空
+        score *= 1.3
+    elif price_position == "low" and score > 0.2:
+        # 低位利好 → 放大利好
+        score *= 1.3
     
     return max(-1.0, min(1.0, score)), signals
 
@@ -353,15 +374,17 @@ def _set_cached(cache: dict, key: str, data: any):
 # 主评分函数
 # ────────────────────────────────────────────────
 
-def score_news_and_sector(code: str, name: str) -> Tuple[int, List[str]]:
+def score_news_and_sector(code: str, name: str, rsi: float = 50.0) -> Tuple[int, List[str]]:
     """
-    综合新闻情绪 + 行业热度 + 资金流向
+    综合新闻情绪 + 行业热度 + 资金流向 v2.1
     返回 (总分 0-30, 理由列表)
     
     评分拆分：
     ① 行业热度     0-15分（确定性评分，不依赖网络）
     ② 新闻情绪     0-10分（依赖网络，失败时给基础分）
     ③ 资金流向     0-5分（可选，失败时跳过）
+    
+    v2.1 新增：RSI位置上下文影响新闻情绪权重
     """
     total_score = 0
     reasons = []
@@ -373,7 +396,7 @@ def score_news_and_sector(code: str, name: str) -> Tuple[int, List[str]]:
     reasons.append(sector_label)
     
     # ── ② 新闻情绪（0-10分）──
-    news_score, news_reasons = _score_news_sentiment(code, name)
+    news_score, news_reasons = _score_news_sentiment(code, name, rsi=rsi)
     total_score += news_score
     reasons.extend(news_reasons)
     
@@ -385,8 +408,8 @@ def score_news_and_sector(code: str, name: str) -> Tuple[int, List[str]]:
     return min(total_score, 30), reasons
 
 
-def _score_news_sentiment(code: str, name: str) -> Tuple[int, List[str]]:
-    """新闻情绪评分（0-10分）"""
+def _score_news_sentiment(code: str, name: str, rsi: float = 50.0) -> Tuple[int, List[str]]:
+    """新闻情绪评分（0-10分）v2.1 - 增加位置上下文"""
     # 检查缓存
     cached = _get_cached(_news_cache, code)
     if cached is not None:
@@ -395,11 +418,19 @@ def _score_news_sentiment(code: str, name: str) -> Tuple[int, List[str]]:
     score = 5  # 默认中间分（无新闻不代表坏事）
     reasons = []
     
+    # 判断价格位置（高位/低位/中性）
+    if rsi >= 75:
+        price_position = "high"
+    elif rsi <= 30:
+        price_position = "low"
+    else:
+        price_position = "neutral"
+    
     try:
         titles = _fetch_stock_news_em(code)
         
         if titles:
-            sentiment, signals = analyze_sentiment(titles)
+            sentiment, signals = analyze_sentiment(titles, price_position=price_position)
             
             # 情绪分映射到0-10
             news_score = int((sentiment + 1) / 2 * 10)

@@ -714,6 +714,13 @@
         </div>
       </div>
 
+      <!-- 大盘环境横幅 v5.0 -->
+      <div id="market-regime-banner" style="display:none; margin-bottom:16px; padding:12px 16px; border-radius:8px; font-size:14px; line-height:1.6; border-left:4px solid var(--accent);">
+      </div>
+
+      <!-- 调仓提醒横幅 v5.0 -->
+      <div id="alert-banner" style="display:none; margin-bottom:16px;"></div>
+
       <!-- 推荐股票 -->
       <div class="section">
         <div class="section-header">
@@ -926,6 +933,8 @@
             loadLogs();
             loadWatchlist();
             loadWatchedCodes();
+            loadMarketRegime();
+            loadAlerts();
             updateScanStatus();
             setInterval(updateScanStatus, 10000);
           } else {
@@ -1294,6 +1303,18 @@
             </div>
           ` : ''}
           
+          <!-- v5.0: 风险/机会标签 -->
+          ${(item.risk_tags && item.risk_tags.length > 0) ? `
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">
+              ${item.risk_tags.map(t => `<span style="padding:2px 8px;border-radius:10px;font-size:11px;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);">⚠️${t}</span>`).join('')}
+            </div>
+          ` : ''}
+          ${(item.opportunity_tags && item.opportunity_tags.length > 0) ? `
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">
+              ${item.opportunity_tags.map(t => `<span style="padding:2px 8px;border-radius:10px;font-size:11px;background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.3);">✨${t}</span>`).join('')}
+            </div>
+          ` : ''}
+          
           <!-- 操作按钮 -->
           <div style="display:flex;gap:10px;">
             <button class="btn" onclick="doBuy('${code}','${name.replace(/'/g,"\\'")}',${item.suggested_shares||100},${buyPrice})">
@@ -1476,6 +1497,69 @@
             const scanTime = document.getElementById('scan-time');
             if (scanTime) scanTime.textContent = time;
           }
+    }
+
+    // ── v5.0 新增：大盘环境 ──
+    function loadMarketRegime() {
+      fetch(`${API_BASE}/market/regime`)
+        .then(r => r.json())
+        .then(res => {
+          if (!res.success || !res.data) return;
+          const d = res.data;
+          const banner = document.getElementById('market-regime-banner');
+          if (!banner) return;
+
+          const colors = {
+            '强势': { bg: '#1a3a1a', border: '#22c55e' },
+            '震荡': { bg: '#2a2a1a', border: '#eab308' },
+            '弱势': { bg: '#2a1a1a', border: '#f97316' },
+            '暴跌': { bg: '#3a1a1a', border: '#ef4444' },
+          };
+          const c = colors[d.regime] || colors['震荡'];
+          banner.style.display = 'block';
+          banner.style.background = c.bg;
+          banner.style.borderColor = c.border;
+          banner.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <div>
+                <strong style="color:${c.border}">☀ 大盘环境：${d.regime}</strong>
+                <span style="color:var(--muted);margin-left:8px;">上证 ${d.sh_change_pct >= 0 ? '+' : ''}${d.sh_change_pct}% | ${d.sh_price}点</span>
+              </div>
+              <div style="color:var(--muted);font-size:13px;">${d.advice}</div>
+            </div>
+          `;
+        })
+        .catch(() => {});
+    }
+
+    // ── v5.0 新增：调仓提醒 ──
+    function loadAlerts() {
+      if (!authToken) return;
+      authFetch(`${API_BASE}/portfolio/alerts`)
+        .then(r => r.json())
+        .then(res => {
+          if (!res.success || !res.data || res.data.length === 0) return;
+          const banner = document.getElementById('alert-banner');
+          if (!banner) return;
+
+          let html = '';
+          res.data.forEach(a => {
+            const icons = { danger: '🔴', warning: '🟡', info: '🟢' };
+            const icon = icons[a.level] || '📌';
+            const bgs = { danger: '#3a1515', warning: '#3a2a10', info: '#152a15' };
+            const bg = bgs[a.level] || '#1a1a2a';
+            const borders = { danger: '#ef4444', warning: '#f59e0b', info: '#22c55e' };
+            const border = borders[a.level] || '#6b7280';
+            html += `<div style="padding:10px 14px;background:${bg};border-radius:6px;border-left:3px solid ${border};margin-bottom:8px;font-size:13px;line-height:1.5;">
+              ${icon} <strong>${a.name || ''}</strong> ${a.message}
+              <span style="color:${border};margin-left:8px;font-weight:600;">${a.action}</span>
+            </div>`;
+          });
+
+          banner.style.display = 'block';
+          banner.innerHTML = html;
+        })
+        .catch(() => {});
     }
 
     // 加载持仓

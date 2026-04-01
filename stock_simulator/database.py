@@ -162,6 +162,9 @@ def init_db():
         ("detail_reasons", "TEXT"),
         ("recommendation_detail", "TEXT"),
         ("strategy_note", "TEXT"),
+        ("market_regime", "TEXT"),
+        ("risk_tags", "TEXT"),
+        ("opportunity_tags", "TEXT"),
     ]
     for col_name, col_type in new_columns:
         try:
@@ -550,6 +553,8 @@ def save_suggestions(suggestions: List[Dict]):
         breakdown_json = json.dumps(s.get("score_breakdown", {}), ensure_ascii=False)
         detail_reasons_json = json.dumps(s.get("detail_reasons", {}), ensure_ascii=False)
         recommendation_detail_json = json.dumps(s.get("recommendation_detail", {}), ensure_ascii=False)
+        risk_tags_json = json.dumps(s.get("risk_tags", []), ensure_ascii=False)
+        opp_tags_json = json.dumps(s.get("opportunity_tags", []), ensure_ascii=False)
         
         cursor.execute("""
             INSERT INTO suggestions 
@@ -557,8 +562,9 @@ def save_suggestions(suggestions: List[Dict]):
              detail_reasons, recommendation_detail,
              buy_price, stop_loss, take_profit, position_pct, strategy_note,
              rsi, macd, vol_ratio,
-             suggested_shares, estimated_cost, action, already_holding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             suggested_shares, estimated_cost, action, already_holding,
+             market_regime, risk_tags, opportunity_tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             s["code"], s["name"], s["current_price"], s["change_pct"], s["score"],
             signals_json, breakdown_json, detail_reasons_json, recommendation_detail_json,
@@ -566,7 +572,9 @@ def save_suggestions(suggestions: List[Dict]):
             s["position_pct"], s.get("strategy_note", ""),
             s.get("rsi"), s.get("macd"), s.get("vol_ratio"),
             s["suggested_shares"], s["estimated_cost"], s["action"], 
-            int(s.get("already_holding", False))
+            int(s.get("already_holding", False)),
+            s.get("market_regime", ""),
+            risk_tags_json, opp_tags_json
         ))
     
     conn.commit()
@@ -593,6 +601,9 @@ def load_suggestions() -> List[Dict]:
         row["detail_reasons"] = json.loads(row["detail_reasons"]) if row.get("detail_reasons") else {}
         row["recommendation_detail"] = json.loads(row["recommendation_detail"]) if row.get("recommendation_detail") else {}
         row["already_holding"] = bool(row.get("already_holding", 0))
+        row["risk_tags"] = json.loads(row["risk_tags"]) if row.get("risk_tags") else []
+        row["opportunity_tags"] = json.loads(row["opportunity_tags"]) if row.get("opportunity_tags") else []
+        row["market_regime"] = row.get("market_regime", "")
         # 字段名映射：前端使用 code/name，数据库存的是 stock_code/stock_name
         row["code"] = row.get("stock_code", "")
         row["name"] = row.get("stock_name", "")

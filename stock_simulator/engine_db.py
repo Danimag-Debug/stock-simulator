@@ -1,16 +1,34 @@
 """
 选股引擎 - 数据库版本（支持多用户）
-专业多因子量化评分系统 v4.0
+专业多因子量化评分系统 v5.0
 
-评分体系（来自专业交易员视角）：
+v5.0 重大升级（专业操盘手视角）：
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+新增模块:
+1. 大盘环境判断 (market_regime_analyzer)  - 牛市/震荡/弱势/暴跌分级
+2. 组合风险管理 (portfolio_risk)           - 行业分散度控制
+3. 动态调仓提醒 (alert_system)           - 止损/止盈/减仓提醒
+4. 支撑/压力位识别                        - 关键价位止损止盈
+5. 顶底背离反哺评分                        - 背离信号直接影响评分
+6. 时间维度因子                           - 连续阳线/缩量变盘等
+7. 新闻情绪位置上下文                      - 高位利好打折/低位利空打折
+
+评分体系：
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 维度           满分    核心指标
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-技术面         40分    布林带/KDJ/MACD/RSI/WR/ATR/OBV/VWAP/动量
+技术面         40分    布林带/KDJ/MACD/RSI/WR/ATR/OBV/VWAP/动量/背离/时间
 基本面         25分    PE/PB/ROE/PEG/股息率/DCF估值/成长性
-行业情报       35分    行业热度/资金流向/新闻情绪/机构关注
+行业情报       35分    行业热度/资金流向/新闻情绪(含位置上下文)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 总分: 100分
+
+选股流程:
+1. 大盘环境判断 → 暴跌日停止推荐
+2. 全市场筛选 → 成交额前500只
+3. 多维度评分 → 动态评分门槛(大盘弱时提高)
+4. 行业分散度控制 → 同行业最多2只
+5. 仓位限制 → 受大盘环境约束
 """
 
 import json
@@ -63,10 +81,15 @@ try:
     import news_analyzer
     import fundamental_analyzer
     import technical_analyzer   # 新增：专业技术分析模块
+    import market_regime_analyzer  # 新增：大盘环境判断
+    import portfolio_risk       # 新增：组合风险管理
+    import alert_system         # 新增：动态调仓提醒
     if TUSHARE_AVAILABLE:
         fundamental_analyzer.set_pro_api(ts.pro_api())
+        market_regime_analyzer.set_tushare(ts)
+        alert_system.init_alert_system(ts_instance=ts, analyzer_available=True)
     ANALYSIS_MODULES_AVAILABLE = True
-    print("[INFO] 辅助分析模块加载成功（新闻+基本面+专业技术分析）")
+    print("[INFO] 辅助分析模块加载成功（新闻+基本面+技术+大盘环境+风控+提醒）")
 except Exception as _e:
     ANALYSIS_MODULES_AVAILABLE = False
     print(f"[WARN] 辅助分析模块加载失败: {_e}")
@@ -625,14 +648,14 @@ def _score_fundamental_wrapper(code: str, name: str, current_price: float) -> Tu
         return min(fallback, 20), ["基本面评估中(数据获取延迟)"]
 
 
-def _score_news_sector_wrapper(code: str, name: str) -> Tuple[int, List[str]]:
+def _score_news_sector_wrapper(code: str, name: str, rsi: float = 50.0) -> Tuple[int, List[str]]:
     """
-    新闻情报 + 行业热度 + 资金流向评分（0-35分）
+    新闻情报 + 行业热度 + 资金流向评分（0-35分）v2.1
     
-    注意：news_analyzer v2.0 已内置降级机制：
+    注意：news_analyzer v2.1 已内置位置上下文：
+    - 高位利好 = 利好兑现（打折）
+    - 低位利空 = 利空出尽（打折）
     - 行业热度基于静态映射（不依赖网络），永远有效
-    - 新闻情绪失败时给差异化基础分（不再是固定10分）
-    - 资金流向可选，失败不影响其他维度
     """
     if not ANALYSIS_MODULES_AVAILABLE:
         # 无模块时用代码和名称做基础行业评分
@@ -656,7 +679,7 @@ def _score_news_sector_wrapper(code: str, name: str) -> Tuple[int, List[str]]:
         return min(score, 35), reasons
 
     try:
-        raw_score, reasons = news_analyzer.score_news_and_sector(code, name)
+        raw_score, reasons = news_analyzer.score_news_and_sector(code, name, rsi=rsi)
         # news_analyzer 返回 0-30 分，按比例缩放到 0-35
         scaled = int(raw_score * 35 / 30)
         return min(scaled, 35), reasons
@@ -712,7 +735,7 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
 
     # ── 维度3+4：新闻情报+行业热度+资金流（35分）──
     if enable_deep_analysis:
-        news_score, news_signals = _score_news_sector_wrapper(code, name)
+        news_score, news_signals = _score_news_sector_wrapper(code, name, rsi=rsi_val)
     else:
         news_score = 12 + (int(code[-2:]) % 8)
         news_signals = []
@@ -761,7 +784,7 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
         else:
             take_profit = round(buy_price * 1.08, 2)
 
-    # ── 仓位管理（基于评分和风险评估）──
+    # ── 仓位管理（基于评分和风险评估 + 大盘环境限制）──
     stop_loss_pct = (buy_price - stop_loss) / buy_price if buy_price > 0 else 0.05
 
     if total_score >= 78:
@@ -778,6 +801,9 @@ def score_stock(code: str, name: str, current_price: float, change_pct: float,
     else:
         position_pct = 0.05
         strategy_note = "观察仓位，谨慎参与，止损严格"
+
+    # 大盘环境仓位限制（在score_stock中无法直接获取，由调用方调整）
+    # 注意：此处不做限制，限制在 run_stock_scan 的 suggestions 构建时应用
 
     # ── 生成详情推荐理由文本 ──
     recommendation_detail = _build_recommendation_detail(
@@ -1146,7 +1172,25 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
     4. 按综合评分排序，随机扰动保证多样性
     5. 返回前 top_n 只
     """
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 开始全市场扫描（多维度分析 v3.0）...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 开始全市场扫描（多维度分析 v5.0）...")
+
+    # ── 0. 大盘环境判断（v5.0 新增）──
+    regime_info = None
+    position_limit = 0.6
+    score_threshold = 50
+    if ANALYSIS_MODULES_AVAILABLE:
+        try:
+            regime_info = market_regime_analyzer.analyze_market_regime()
+            position_limit = regime_info.get("position_limit", 0.6)
+            score_threshold = regime_info.get("score_threshold", 50)
+            print(f"[大盘环境] {regime_info['regime']} | 仓位上限{position_limit*100:.0f}% | 评分门槛≥{score_threshold}")
+            
+            # 暴跌日：停止推荐
+            if regime_info["regime"] == "暴跌":
+                print("[大盘环境] 当前为暴跌环境，停止推荐新股票！")
+                return []
+        except Exception as e:
+            print(f"[WARN] 大盘环境判断失败: {e}")
 
     stock_list = get_stock_list()
     if not stock_list:
@@ -1205,11 +1249,21 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
             result = future.result()
             stock = future_to_stock[future]
             
-            if result and result["score"] >= 45 and stock["code"] not in seen_result_codes:
+            if result and result["score"] >= score_threshold and stock["code"] not in seen_result_codes:
                 results.append(result)
                 seen_result_codes.add(stock["code"])
 
-    print(f"[INFO] 分析完成，共 {len(results)} 只股票评分 >= 45 分")
+    print(f"[INFO] 分析完成，共 {len(results)} 只股票评分 >= {score_threshold} 分")
+
+    # ── 行业分散度控制（v5.0 新增）──
+    if ANALYSIS_MODULES_AVAILABLE:
+        try:
+            results_before_diversity = len(results)
+            results = portfolio_risk.apply_industry_diversification(results)
+            if len(results) < results_before_diversity:
+                print(f"[行业分散] {results_before_diversity} → {len(results)} 只（去除同行业重复）")
+        except Exception as e:
+            print(f"[WARN] 行业分散度控制失败: {e}")
 
     # ── 加入随机扰动排序（相同分数区间内保证多样性）──
     for r in results:
@@ -1225,7 +1279,9 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
     suggestions = []
     for r in top:
         account_value = 150000.0
-        shares = int(account_value * r["position_pct"] / r["buy_price"] // 100 * 100)
+        # 应用大盘环境仓位限制
+        effective_position = min(r["position_pct"], position_limit)
+        shares = int(account_value * effective_position / r["buy_price"] // 100 * 100)
         shares = max(shares, 100)
         cost = shares * r["buy_price"]
 
@@ -1235,13 +1291,45 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
             breakdown_str = " | ".join([f"{k}:{v}" for k, v in breakdown.items()])
             print(f"  [{r['name']}({r['code']})] 总分:{r['score']} ({breakdown_str})")
 
+        # 新增：背离和时间因子信息
+        tech_ind = r.get("tech_indicators", {})
+        div_info = tech_ind.get("divergence", {})
+        time_info = tech_ind.get("time_factors", {})
+        
+        # 风险标签
+        risk_tags = []
+        if div_info.get("macd_top"):
+            risk_tags.append("MACD顶背离")
+        if div_info.get("rsi_top"):
+            risk_tags.append("RSI顶背离")
+        if time_info.get("consecutive_red", 0) >= 3:
+            risk_tags.append("连阴走势")
+        if r.get("rsi", 50) > 80:
+            risk_tags.append("RSI超买")
+        
+        # 机会标签
+        opp_tags = []
+        if div_info.get("macd_bottom"):
+            opp_tags.append("MACD底背离")
+        if div_info.get("rsi_bottom"):
+            opp_tags.append("RSI底背离")
+        if time_info.get("consecutive_green", 0) >= 3:
+            opp_tags.append("连阳走势")
+        if time_info.get("new_high_breakout"):
+            opp_tags.append("突破新高")
+
         suggestions.append({
             **r,
+            "position_pct": effective_position,  # 使用环境调整后的仓位
             "suggested_shares": shares,
             "estimated_cost": round(cost, 2),
             "action": "买入",
             "already_holding": False,
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now().isoformat(),
+            # 新增元数据
+            "market_regime": regime_info.get("regime", "震荡") if regime_info else "震荡",
+            "risk_tags": risk_tags,
+            "opportunity_tags": opp_tags,
         })
 
     # 保存到数据库

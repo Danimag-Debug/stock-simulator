@@ -23,6 +23,15 @@ from engine_db import (
     query_stock_score, search_stock_by_name
 )
 
+# 加载新模块
+try:
+    import market_regime_analyzer
+    import alert_system
+    import portfolio_risk
+    NEW_MODULES_AVAILABLE = True
+except ImportError:
+    NEW_MODULES_AVAILABLE = False
+
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -539,6 +548,96 @@ def set_capital(current_user_id):
     result = database.set_account_capital(current_user_id, capital)
     status_code = 200 if result["success"] else 400
     return jsonify(result), status_code
+
+# ─────────────────────────────────────────────
+# 市场环境 & 风控 API（公开/半公开）
+# ─────────────────────────────────────────────
+
+@app.route("/api/market/regime", methods=["GET"])
+def get_market_regime():
+    """获取当前大盘环境判断（公开接口）"""
+    if not NEW_MODULES_AVAILABLE:
+        return jsonify({"success": False, "message": "模块加载中"})
+    try:
+        regime = market_regime_analyzer.analyze_market_regime()
+        return jsonify({"success": True, "data": regime})
+    except Exception as e:
+        print(f"[ERROR] 获取大盘环境失败: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/portfolio/alerts", methods=["GET"])
+@token_required
+def get_portfolio_alerts(current_user_id):
+    """获取持仓调仓提醒（需要登录）"""
+    if not NEW_MODULES_AVAILABLE:
+        return jsonify({"success": True, "data": [], "items": []})
+    
+    try:
+        holdings = database.get_holdings(current_user_id)
+        if not holdings:
+            return jsonify({"success": True, "data": [], "items": []})
+        
+        # 获取实时价格
+        from engine_db import TUSHARE_AVAILABLE
+        real_prices = {}
+        if TUSHARE_AVAILABLE:
+            try:
+                import tushare as ts
+                codes = [h["stock_code"] for h in holdings]
+                df_rt = ts.get_realtime_quotes(codes)
+                if df_rt is not None and not df_rt.empty:
+                    for _, row in df_rt.iterrows():
+                        code = str(row['code']).zfill(6)
+                        try:
+                            price = float(str(row['price']).strip())
+                            pre_close = float(str(row['pre_close']).strip())
+                            if price > 0 and pre_close > 0:
+                                real_prices[code] = {
+                                    "price": price,
+                                    "change_pct": round((price - pre_close) / pre_close * 100, 2),
+                                }
+                        except (ValueError, TypeError):
+                            continue
+            except Exception:
+                pass
+        
+        # 获取大盘环境
+        regime = None
+        try:
+            regime = market_regime_analyzer.analyze_market_regime()
+        except:
+            pass
+        
+        # 生成提醒
+        alerts = alert_system.check_holdings_alerts(holdings, real_prices, regime)
+        
+        return jsonify({
+            "success": True,
+            "data": alerts,
+            "items": alerts,
+            "has_danger": any(a["level"] == "danger" for a in alerts),
+        })
+    except Exception as e:
+        print(f"[ERROR] 获取调仓提醒失败: {e}")
+        return jsonify({"success": True, "data": [], "items": []})
+
+
+@app.route("/api/portfolio/risk", methods=["GET"])
+@token_required
+def get_portfolio_risk(current_user_id):
+    """获取持仓行业集中度风险评估（需要登录）"""
+    if not NEW_MODULES_AVAILABLE:
+        return jsonify({"success": False, "message": "模块加载中"})
+    
+    try:
+        holdings = database.get_holdings(current_user_id)
+        risk = portfolio_risk.evaluate_portfolio_risk(holdings)
+        return jsonify({"success": True, "data": risk})
+    except Exception as e:
+        print(f"[ERROR] 获取风控评估失败: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
 
 # ─────────────────────────────────────────────
 # 管理功能（公开）
