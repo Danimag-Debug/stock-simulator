@@ -156,7 +156,7 @@ def init_db():
     )
     """)
     
-    # 自动迁移：为旧表添加缺失的列
+    # 自动迁移：为旧表添加缺失的列（先检查列是否存在）
     new_columns = [
         ("score_breakdown", "TEXT"),
         ("detail_reasons", "TEXT"),
@@ -166,12 +166,16 @@ def init_db():
         ("risk_tags", "TEXT"),
         ("opportunity_tags", "TEXT"),
     ]
+    cursor.execute("PRAGMA table_info(suggestions)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
     for col_name, col_type in new_columns:
-        try:
-            cursor.execute(f"ALTER TABLE suggestions ADD COLUMN {col_name} {col_type}")
-            print(f"[数据库] 已为 suggestions 表添加 {col_name} 列")
-        except Exception:
-            pass  # 列已存在，忽略
+        if col_name not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE suggestions ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+                print(f"[数据库] 已为 suggestions 表添加 {col_name} 列")
+            except Exception as e:
+                print(f"[数据库] 添加 {col_name} 列失败: {e}")
 
     # 自动迁移：为 accounts 表添加 set_initial_cash 列
     try:
@@ -528,10 +532,38 @@ def is_in_watchlist(user_id: int, stock_code: str) -> bool:
     return row is not None
 
 # 推荐管理
+def _get_suggestions_columns(conn) -> set:
+    """获取 suggestions 表当前所有列名"""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(suggestions)")
+    return {row[1] for row in cursor.fetchall()}
+
 def save_suggestions(suggestions: List[Dict]):
     """保存推荐列表（覆盖旧的，去重保证唯一性）"""
     conn = get_db()
     cursor = conn.cursor()
+    
+    # 检查表结构，动态适配列
+    existing_cols = _get_suggestions_columns(conn)
+    
+    # 如果缺少必要的新列，先尝试迁移
+    required_new_cols = {
+        "market_regime": "TEXT",
+        "risk_tags": "TEXT",
+        "opportunity_tags": "TEXT",
+        "strategy_note": "TEXT",
+        "recommendation_detail": "TEXT",
+        "detail_reasons": "TEXT",
+        "score_breakdown": "TEXT",
+    }
+    for col_name, col_type in required_new_cols.items():
+        if col_name not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE suggestions ADD COLUMN {col_name} {col_type}")
+                existing_cols.add(col_name)
+                print(f"[数据库] save_suggestions: 紧急添加 {col_name} 列")
+            except Exception as e:
+                print(f"[数据库] save_suggestions: 无法添加 {col_name} 列: {e}")
     
     # 清空旧推荐
     cursor.execute("DELETE FROM suggestions")
@@ -547,35 +579,57 @@ def save_suggestions(suggestions: List[Dict]):
     
     print(f"[INFO] save_suggestions: {len(suggestions)} -> {len(deduped)} (去重)")
     
+    # 动态构建 INSERT 语句（只包含表中实际存在的列）
+    # 基础列（v2.0 起就有）
+    base_cols = ["stock_code", "stock_name", "current_price", "change_pct", "score", "signals",
+                 "buy_price", "stop_loss", "take_profit", "position_pct",
+                 "rsi", "macd", "vol_ratio",
+                 "suggested_shares", "estimated_cost", "action", "already_holding"]
+    # 可选列（可能不存在于旧数据库）
+    optional_cols = {
+        "score_breakdown": lambda s: json.dumps(s.get("score_breakdown", {}), ensure_ascii=False),
+        "detail_reasons": lambda s: json.dumps(s.get("detail_reasons", {}), ensure_ascii=False),
+        "recommendation_detail": lambda s: json.dumps(s.get("recommendation_detail", {}), ensure_ascii=False),
+        "strategy_note": lambda s: s.get("strategy_note", ""),
+        "market_regime": lambda s: s.get("market_regime", ""),
+        "risk_tags": lambda s: json.dumps(s.get("risk_tags", []), ensure_ascii=False),
+        "opportunity_tags": lambda s: json.dumps(s.get("opportunity_tags", []), ensure_ascii=False),
+    }
+    
+    # 只使用表中存在的列
+    insert_cols = [c for c in base_cols if c in existing_cols]
+    insert_values_map = {
+        "stock_code": lambda s: s["code"],
+        "stock_name": lambda s: s["name"],
+        "current_price": lambda s: s["current_price"],
+        "change_pct": lambda s: s["change_pct"],
+        "score": lambda s: s["score"],
+        "signals": lambda s: json.dumps(s.get("signals", []), ensure_ascii=False),
+        "buy_price": lambda s: s["buy_price"],
+        "stop_loss": lambda s: s["stop_loss"],
+        "take_profit": lambda s: s["take_profit"],
+        "position_pct": lambda s: s["position_pct"],
+        "rsi": lambda s: s.get("rsi"),
+        "macd": lambda s: s.get("macd"),
+        "vol_ratio": lambda s: s.get("vol_ratio"),
+        "suggested_shares": lambda s: s["suggested_shares"],
+        "estimated_cost": lambda s: s["estimated_cost"],
+        "action": lambda s: s["action"],
+        "already_holding": lambda s: int(s.get("already_holding", False)),
+    }
+    for col_name, val_fn in optional_cols.items():
+        if col_name in existing_cols:
+            insert_cols.append(col_name)
+            insert_values_map[col_name] = val_fn
+    
+    placeholders = ", ".join(["?"] * len(insert_cols))
+    cols_str = ", ".join(insert_cols)
+    sql = f"INSERT INTO suggestions ({cols_str}) VALUES ({placeholders})"
+    
     # 插入去重后的推荐
     for s in deduped:
-        signals_json = json.dumps(s.get("signals", []), ensure_ascii=False)
-        breakdown_json = json.dumps(s.get("score_breakdown", {}), ensure_ascii=False)
-        detail_reasons_json = json.dumps(s.get("detail_reasons", {}), ensure_ascii=False)
-        recommendation_detail_json = json.dumps(s.get("recommendation_detail", {}), ensure_ascii=False)
-        risk_tags_json = json.dumps(s.get("risk_tags", []), ensure_ascii=False)
-        opp_tags_json = json.dumps(s.get("opportunity_tags", []), ensure_ascii=False)
-        
-        cursor.execute("""
-            INSERT INTO suggestions 
-            (stock_code, stock_name, current_price, change_pct, score, signals, score_breakdown,
-             detail_reasons, recommendation_detail,
-             buy_price, stop_loss, take_profit, position_pct, strategy_note,
-             rsi, macd, vol_ratio,
-             suggested_shares, estimated_cost, action, already_holding,
-             market_regime, risk_tags, opportunity_tags)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            s["code"], s["name"], s["current_price"], s["change_pct"], s["score"],
-            signals_json, breakdown_json, detail_reasons_json, recommendation_detail_json,
-            s["buy_price"], s["stop_loss"], s["take_profit"],
-            s["position_pct"], s.get("strategy_note", ""),
-            s.get("rsi"), s.get("macd"), s.get("vol_ratio"),
-            s["suggested_shares"], s["estimated_cost"], s["action"], 
-            int(s.get("already_holding", False)),
-            s.get("market_regime", ""),
-            risk_tags_json, opp_tags_json
-        ))
+        values = [insert_values_map[col](s) for col in insert_cols]
+        cursor.execute(sql, values)
     
     conn.commit()
     conn.close()
