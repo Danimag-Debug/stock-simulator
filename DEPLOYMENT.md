@@ -27,7 +27,14 @@ Railway 提供免费的 PostgreSQL 和简单易用的部署流程。
    - 访问 https://railway.app 用 GitHub 登录
    - 点击 "New Project" → "Deploy from GitHub repo"
 
-3. **配置环境变量**
+3. **配置 Volume（数据持久化 — 必须！）**
+   - Railway 每次部署会销毁容器，数据库文件会丢失
+   - 必须挂载 Volume 才能保存用户数据和持仓：
+   - Railway Dashboard → 你的 Service → **Volumes** 标签 → **Create Volume**
+   - **Mount Path 填写**: `/data`
+   - 保存后 Railway 会自动重启服务
+
+4. **配置环境变量**
    - 在 Railway Dashboard → Project → Variables 添加：
      ```
      TUSHARE_TOKEN=你的Tushare Pro Token（可选）
@@ -35,13 +42,14 @@ Railway 提供免费的 PostgreSQL 和简单易用的部署流程。
      ```
    - 如果没有 Tushare Token，系统将使用模拟数据
 
-4. **等待部署完成**
+5. **等待部署完成**
    - Railway 会自动检测 requirements.txt 并构建
    - 构建完成后会显示访问 URL
 
-5. **访问网站**
-   - 点击 Railway Dashboard 中的 "Generate Domain" 获取域名
-   - 或使用默认的 railway.app 子域名
+6. **验证数据持久化**
+   - 部署完成后查看 Railway 部署日志
+   - 如果看到 `[数据库] ✅ 持久化正常 | 路径: /data/stock_simulator.db` 说明 Volume 已生效
+   - 如果看到 `⚠️ 警告：数据库为空！` 说明 Volume 未挂载，需要回到步骤 3
 
 #### Railway 免费套餐限制：
 - 每月 $5 额度（足够小型应用）

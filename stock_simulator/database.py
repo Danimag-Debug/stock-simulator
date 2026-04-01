@@ -11,15 +11,48 @@ from typing import List, Dict, Optional
 import hashlib
 import secrets
 
-# 数据库路径 - Railway 使用持久化卷
-# 优先使用环境变量指定的路径，否则使用当前目录
-if os.getenv("RAILWAY_VOLUME_MOUNT_PATH"):
-    # Railway 持久化卷路径
-    DB_DIR = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH"), "data")
-else:
-    # 本地开发路径
-    DB_DIR = os.path.join(os.path.dirname(__file__), "data")
+# ── 数据库路径配置 ──
+# Railway 每次部署会销毁容器，所以数据库必须放在 Volume 上才能持久化。
+#
+# Railway Volume 挂载方式（二选一）：
+#   方式1: Railway Dashboard → Service → Volumes → 创建卷 → 挂载到 /data
+#   方式2: Railway Dashboard → Service → Volumes → 创建卷 → 挂载到 /volume
+#
+# 代码会自动检测以上挂载路径，无需手动设置环境变量。
+# 本地开发时使用 stock_simulator/data/ 目录。
 
+def _detect_db_dir() -> str:
+    """自动检测持久化存储目录"""
+    # 1. Railway Volume 标准挂载路径（按优先级检测）
+    railway_paths = [
+        "/data",           # Railway Dashboard 创建 Volume 时推荐的默认路径
+        "/volume",         # Railway 另一种常见挂载路径
+    ]
+    for p in railway_paths:
+        if os.path.isdir(p):
+            print(f"[数据库] 检测到持久化卷: {p}")
+            return p
+
+    # 2. Railway 环境变量（兼容旧配置）
+    volume_env = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
+    if volume_env:
+        print(f"[数据库] 使用 RAILWAY_VOLUME_MOUNT_PATH: {volume_env}")
+        return volume_env
+
+    # 3. Render 平台持久化路径
+    if os.getenv("RENDER"):
+        render_dir = "/opt/render/project/src/data"
+        os.makedirs(render_dir, exist_ok=True)
+        print(f"[数据库] Render 平台: {render_dir}")
+        return render_dir
+
+    # 4. 本地开发
+    local_dir = os.path.join(os.path.dirname(__file__), "data")
+    print(f"[数据库] 本地开发路径: {local_dir}")
+    return local_dir
+
+
+DB_DIR = _detect_db_dir()
 DATABASE_PATH = os.path.join(DB_DIR, "stock_simulator.db")
 
 def get_db():
@@ -154,7 +187,33 @@ def init_db():
     
     conn.commit()
     conn.close()
-    print("[数据库] 初始化完成")
+
+    # 启动诊断：检查数据库是否已有数据
+    _db_health_check()
+
+
+def _db_health_check():
+    """启动时打印数据库健康状态，便于排查持久化问题"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        user_count = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        holding_count = cursor.execute("SELECT COUNT(*) FROM holdings").fetchone()[0]
+        trade_count = cursor.execute("SELECT COUNT(*) FROM trade_logs").fetchone()[0]
+
+        db_size_mb = os.path.getsize(DATABASE_PATH) / (1024 * 1024) if os.path.exists(DATABASE_PATH) else 0
+
+        print(f"[数据库] ✅ 持久化正常 | 路径: {DATABASE_PATH}")
+        print(f"[数据库]    用户: {user_count} | 持仓: {holding_count} | 交易记录: {trade_count} | 文件大小: {db_size_mb:.2f}MB")
+
+        if user_count == 0 and os.getenv("RAILWAY_ENVIRONMENT"):
+            print("[数据库] ⚠️  警告：数据库为空！如果这不是首次部署，说明 Volume 未正确挂载！")
+            print("[数据库]    请在 Railway Dashboard → Service → Volumes 中创建卷并挂载到 /data")
+
+        conn.close()
+    except Exception as e:
+        print(f"[数据库] ❌ 健康检查失败: {e}")
 
 # 密码哈希函数
 def hash_password(password: str) -> str:
