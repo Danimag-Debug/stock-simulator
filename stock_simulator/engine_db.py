@@ -119,6 +119,136 @@ MOCK_STOCK_DETAILS = [
 # 保持向后兼容
 MOCK_STOCKS = [(code, name) for code, name, _ in MOCK_STOCK_DETAILS]
 
+# ─── 全量股票名称缓存（用于名称搜索，避免每次调 API）──
+_STOCK_NAME_CACHE = {}  # {code: name, ...}
+_STOCK_CACHE_LOADED = False
+
+
+def _load_stock_name_cache():
+    """
+    加载沪深两市全部上市股票的代码-名称映射。
+    
+    优先级：
+    1. 静态文件 stock_name_list.py（5400+ 只，瞬时加载）
+    2. 东方财富公开 API（网络备份）
+    3. 模拟股票池（最终回退）
+    """
+    global _STOCK_NAME_CACHE, _STOCK_CACHE_LOADED
+    if _STOCK_CACHE_LOADED:
+        return
+
+    # ── 方式1：静态文件（最可靠、最快速）──
+    try:
+        stock_list_path = os.path.join(os.path.dirname(__file__), "stock_name_list.py")
+        if os.path.exists(stock_list_path):
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("stock_name_list", stock_list_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            stock_map = getattr(mod, 'STOCK_NAME_MAP', {})
+            if stock_map:
+                _STOCK_NAME_CACHE.update(stock_map)
+                _STOCK_CACHE_LOADED = True
+                print(f"[缓存] 股票名称缓存加载完成（静态文件），共 {len(_STOCK_NAME_CACHE)} 只股票")
+                return
+    except Exception as e:
+        print(f"[WARN] 静态股票列表加载失败: {e}")
+
+    # ── 方式2：东方财富 API ──
+    try:
+        import urllib.request
+        total_loaded = 0
+        page = 1
+        page_size = 1000
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Referer': 'https://quote.eastmoney.com/center/gridlist.html#hs_a_board',
+        }
+
+        while page <= 8:
+            url = (
+                f"https://push2.eastmoney.com/api/qt/clist/get?"
+                f"pn={page}&pz={page_size}&po=1&np=1&fltt=2&invt=2&fid=f3"
+                f"&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+                f"&fields=f12,f14"
+            )
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                resp = urllib.request.urlopen(req, timeout=10)
+                data = json.loads(resp.read())
+                items = data.get('data', {}).get('diff', [])
+                for item in items:
+                    code = str(item.get('f12', '')).strip()
+                    name = str(item.get('f14', '')).strip()
+                    if code and name and len(code) == 6:
+                        _STOCK_NAME_CACHE[code] = name
+                        total_loaded += 1
+                total = data.get('data', {}).get('total', 0)
+                if total_loaded >= total or not items:
+                    break
+            except Exception:
+                pass
+            page += 1
+            import time
+            time.sleep(1)
+
+        if len(_STOCK_NAME_CACHE) > 100:
+            _STOCK_CACHE_LOADED = True
+            print(f"[缓存] 股票名称缓存加载完成（东方财富），共 {len(_STOCK_NAME_CACHE)} 只股票")
+            return
+    except Exception as e:
+        print(f"[WARN] 东方财富接口失败: {e}")
+
+    # ── 方式3：模拟股票池回退 ──
+    for c, n, _ in MOCK_STOCK_DETAILS:
+        _STOCK_NAME_CACHE[c] = n
+    _STOCK_CACHE_LOADED = True
+    print(f"[缓存] 股票名称缓存使用模拟池，共 {len(_STOCK_NAME_CACHE)} 只股票")
+
+
+def search_stock_by_name(keyword: str) -> Optional[Tuple[str, str]]:
+    """
+    按名称关键字搜索股票（全量缓存 + 模拟池回退）
+    返回 (code, name) 或 None
+    """
+    # 确保缓存已加载
+    _load_stock_name_cache()
+
+    # 在全量缓存中搜索
+    if _STOCK_NAME_CACHE:
+        matches = []
+        keyword_lower = keyword.lower()
+        for code, name in _STOCK_NAME_CACHE.items():
+            if keyword in name or keyword_lower in name.lower():
+                matches.append((code, name))
+
+        if matches:
+            # 如果有精确匹配（名称以关键字开头），优先返回
+            exact = [m for m in matches if m[1].startswith(keyword)]
+            if exact:
+                return exact[0]
+            return matches[0]
+
+    # 回退到模拟股票池
+    for c, n, _ in MOCK_STOCK_DETAILS:
+        if keyword in n:
+            return (c, n)
+
+    return None
+
+
+def get_stock_name(code: str) -> str:
+    """根据代码获取股票名称"""
+    _load_stock_name_cache()
+    if code in _STOCK_NAME_CACHE:
+        return _STOCK_NAME_CACHE[code]
+    # 回退模拟池
+    for c, n, _ in MOCK_STOCK_DETAILS:
+        if c == code:
+            return n
+    return ""
+
+
 INITIAL_CASH = 150000.0  # 调整为15万元
 
 # ─────────────────────────────────────────────
@@ -1491,18 +1621,14 @@ def query_stock_score(keyword: str) -> Optional[Dict]:
     
     支持两种方式：
     1. 精确代码匹配（如 600519）
-    2. 名称关键字搜索（如 茅台、比亚迪）
+    2. 名称关键字搜索（如 茅台、比亚迪、宁德）
     
-    流程：
-    1. 先精确匹配6位代码
-    2. 再名称模糊搜索 Tushare 实时行情
-    3. 找到后进行完整评分分析
+    覆盖范围：沪深两市全部约 5000+ 只上市股票
     """
-    import pandas as pd
-
     if not TUSHARE_AVAILABLE:
         return None
 
+    keyword = keyword.strip()
     code = keyword.zfill(6) if keyword.isdigit() and len(keyword) <= 6 else ""
 
     # ── 步骤1：确定目标股票 ──
@@ -1513,8 +1639,8 @@ def query_stock_score(keyword: str) -> Optional[Dict]:
 
     if code:
         # 精确代码查询
+        target_name = get_stock_name(code)
         try:
-            ts_code = f"{code}.SH" if code.startswith("6") else f"{code}.SZ"
             df = ts.get_realtime_quotes([code])
             if df is not None and not df.empty:
                 row = df.iloc[0]
@@ -1524,45 +1650,35 @@ def query_stock_score(keyword: str) -> Optional[Dict]:
                     pre_close = float(str(row.get('pre_close', '0')).strip())
                     target_change_pct = round((target_price - pre_close) / pre_close * 100, 2) if pre_close > 0 else 0
                     target_code = code
-                    target_name = str(row.get('name', '')).strip()
+                    if not target_name:
+                        target_name = str(row.get('name', '')).strip()
+                else:
+                    # 代码有效但当前未交易（停牌/退市），返回提示
+                    name = target_name or str(row.get('name', '')).strip()
+                    if name:
+                        return {
+                            "code": code,
+                            "name": name,
+                            "current_price": 0,
+                            "change_pct": 0,
+                            "score": 0,
+                            "buy_price": 0,
+                            "stop_loss": 0,
+                            "take_profit": 0,
+                            "query_type": "code",
+                            "query_keyword": keyword,
+                            "_inactive": True,
+                            "inactive_reason": f"{name}({code}) 当前未交易或已停牌"
+                        }
         except Exception as e:
             print(f"[WARN] 精确代码查询失败 {code}: {e}")
 
     if not target_code:
-        # 名称关键字搜索：在模拟股票池中先匹配
-        matched_mock = None
-        for c, n, _ in MOCK_STOCK_DETAILS:
-            if keyword in n:
-                matched_mock = (c, n)
-                break
-        
-        if matched_mock:
-            target_code = matched_mock[0]
-            target_name = matched_mock[1]
-        else:
-            # 在全市场实时行情中搜索（使用 Tushare stock_basic 获取名称映射）
-            try:
-                # 通过 pro 接口搜索
-                pro = ts.pro_api()
-                # 搜索股票名称
-                for market in ['.SH', '.SZ']:
-                    try:
-                        df_basic = pro.stock_basic(
-                            exchange='', market=market[1:],
-                            fields='ts_code,symbol,name,list_status'
-                        )
-                        if df_basic is not None and not df_basic.empty:
-                            df_basic = df_basic[df_basic['list_status'] == 'L']
-                            matched = df_basic[df_basic['name'].str.contains(keyword, na=False)]
-                            if not matched.empty:
-                                ts_code = matched.iloc[0]['ts_code']
-                                target_code = ts_code.split('.')[0]
-                                target_name = matched.iloc[0]['name']
-                                break
-                    except Exception:
-                        continue
-            except Exception as e:
-                print(f"[WARN] 名称搜索失败: {e}")
+        # 名称关键字搜索
+        matched = search_stock_by_name(keyword)
+        if matched:
+            target_code = matched[0]
+            target_name = matched[1]
 
     if not target_code:
         return None
@@ -1580,6 +1696,24 @@ def query_stock_score(keyword: str) -> Optional[Dict]:
                     target_change_pct = round((target_price - pre_close) / pre_close * 100, 2) if pre_close > 0 else 0
                     if not target_name:
                         target_name = str(row.get('name', '')).strip()
+                else:
+                    # 找到了但停牌
+                    name = target_name or str(row.get('name', '')).strip()
+                    if name:
+                        return {
+                            "code": target_code,
+                            "name": name,
+                            "current_price": 0,
+                            "change_pct": 0,
+                            "score": 0,
+                            "buy_price": 0,
+                            "stop_loss": 0,
+                            "take_profit": 0,
+                            "query_type": "name" if not code else "code",
+                            "query_keyword": keyword,
+                            "_inactive": True,
+                            "inactive_reason": f"{name}({target_code}) 当前未交易或已停牌"
+                        }
         except Exception as e:
             print(f"[WARN] 获取行情失败 {target_code}: {e}")
 

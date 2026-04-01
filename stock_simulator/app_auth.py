@@ -20,7 +20,7 @@ import database
 from engine_db import (
     run_stock_scan, load_suggestions, get_portfolio_snapshot,
     execute_buy, execute_sell, load_trade_log, init_system,
-    query_stock_score
+    query_stock_score, search_stock_by_name
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -272,10 +272,59 @@ def query_stock(current_user_id):
         result = query_stock_score(keyword)
         if result is None:
             return jsonify({"success": False, "message": f"未找到匹配 '{keyword}' 的股票，请检查代码或名称"})
+        # 停牌股票返回提示
+        if result.get("_inactive"):
+            return jsonify({"success": False, "message": result.get("inactive_reason", "该股票当前未交易")})
         return jsonify({"success": True, "data": result})
     except Exception as e:
         print(f"[ERROR] 股票查询失败: {e}")
         return jsonify({"success": False, "message": f"查询失败: {str(e)}"}), 500
+
+
+@app.route("/api/stock/search", methods=["GET"])
+@token_required
+def search_stock(current_user_id):
+    """模糊搜索股票（返回多个匹配结果列表）
+    
+    参数：keyword - 名称关键字（如 银行、新能源、半导体）
+    返回：匹配的股票列表 [{code, name}, ...]（最多20个）
+    """
+    keyword = request.args.get("keyword", "").strip()
+    if not keyword:
+        return jsonify({"success": False, "message": "请输入搜索关键字"}), 400
+    if len(keyword) < 1 or len(keyword) > 20:
+        return jsonify({"success": False, "message": "关键词长度需在 1-20 字符之间"}), 400
+
+    try:
+        from engine_db import _STOCK_NAME_CACHE, _load_stock_name_cache
+        _load_stock_name_cache()
+
+        if not _STOCK_NAME_CACHE:
+            return jsonify({"success": False, "message": "股票数据库未就绪，请稍后再试"})
+
+        # 精确匹配优先
+        exact_matches = []
+        partial_matches = []
+        keyword_lower = keyword.lower()
+
+        for code, name in _STOCK_NAME_CACHE.items():
+            if keyword in name or keyword_lower in name.lower():
+                # 精确：名称以关键字开头
+                if name.startswith(keyword):
+                    exact_matches.append({"code": code, "name": name})
+                else:
+                    partial_matches.append({"code": code, "name": name})
+
+        results = exact_matches + partial_matches
+        results = results[:50]  # 最多返回50个
+
+        if not results:
+            return jsonify({"success": False, "message": f"未找到包含 '{keyword}' 的股票"})
+
+        return jsonify({"success": True, "data": results, "total": len(results)})
+    except Exception as e:
+        print(f"[ERROR] 股票搜索失败: {e}")
+        return jsonify({"success": False, "message": f"搜索失败: {str(e)}"}), 500
 
 # ─────────────────────────────────────────────
 # 需要鉴权的路由（用户私有数据）

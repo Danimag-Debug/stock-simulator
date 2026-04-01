@@ -623,12 +623,13 @@
         <div class="section-header">
           <h2>🔍 股票查询</h2>
         </div>
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;position:relative;" id="stock-query-wrap">
           <input type="text" id="stock-query-input" placeholder="输入股票代码（如 600519）或名称（如 茅台）"
             style="flex:1;min-width:240px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;"
-            onkeydown="if(event.key==='Enter')doStockQuery()">
+            oninput="onQueryInput(this.value)" onkeydown="onQueryKeydown(event)" autocomplete="off">
           <button class="btn" id="btn-stock-query" onclick="doStockQuery()">查询评分</button>
           <span style="font-size:12px;color:var(--muted);">支持沪深两市全部股票</span>
+          <div id="stock-query-suggestions" style="display:none;position:absolute;z-index:999;background:var(--card);border:1px solid var(--border);border-radius:8px;max-height:240px;overflow-y:auto;width:100%;top:44px;left:0;box-shadow:0 8px 24px rgba(0,0,0,0.3);"></div>
         </div>
         <div id="stock-query-result" style="display:none;">
           <!-- 查询结果会动态插入到这里 -->
@@ -938,6 +939,108 @@
           if (btn) { btn.disabled = false; btn.textContent = '刷新推荐'; }
         });
     }
+
+    // ─── 股票搜索自动补全 ───
+    let _searchTimer = null;
+    let _searchResults = [];
+    let _searchIdx = -1;
+
+    function onQueryInput(value) {
+      const sugDiv = document.getElementById('stock-query-suggestions');
+      _searchIdx = -1;
+
+      // 如果输入的是纯数字且长度 >= 4，直接查代码，不显示补全
+      if (/^\d{4,6}$/.test(value.trim())) {
+        sugDiv.style.display = 'none';
+        return;
+      }
+
+      if (value.trim().length < 1) {
+        sugDiv.style.display = 'none';
+        return;
+      }
+
+      // 防抖：300ms
+      clearTimeout(_searchTimer);
+      _searchTimer = setTimeout(() => doStockSearch(value.trim()), 300);
+    }
+
+    function doStockSearch(keyword) {
+      const sugDiv = document.getElementById('stock-query-suggestions');
+      authFetch(`${API_BASE}/stock/search?keyword=${encodeURIComponent(keyword)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && data.data && data.data.length > 0) {
+            _searchResults = data.data;
+            _searchIdx = -1;
+            sugDiv.innerHTML = _searchResults.map((item, i) =>
+              `<div class="search-suggest-item" data-idx="${i}" onclick="selectSuggestion(${i})"
+                style="padding:8px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-size:13px;border-bottom:1px solid var(--border);"
+                onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='transparent'">
+                <span style="font-weight:500;">${item.name}</span>
+                <span style="color:var(--muted);font-size:12px;">${item.code}</span>
+              </div>`
+            ).join('');
+            sugDiv.style.display = 'block';
+          } else {
+            sugDiv.style.display = 'none';
+            _searchResults = [];
+          }
+        })
+        .catch(() => {
+          sugDiv.style.display = 'none';
+        });
+    }
+
+    function selectSuggestion(idx) {
+      const item = _searchResults[idx];
+      if (!item) return;
+      document.getElementById('stock-query-input').value = item.code;
+      document.getElementById('stock-query-suggestions').style.display = 'none';
+      doStockQuery();
+    }
+
+    function onQueryKeydown(e) {
+      const sugDiv = document.getElementById('stock-query-suggestions');
+      if (sugDiv.style.display === 'none' || _searchResults.length === 0) {
+        if (e.key === 'Enter') doStockQuery();
+        return;
+      }
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        _searchIdx = Math.min(_searchIdx + 1, _searchResults.length - 1);
+        highlightSuggestion();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _searchIdx = Math.max(_searchIdx - 1, 0);
+        highlightSuggestion();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (_searchIdx >= 0) {
+          selectSuggestion(_searchIdx);
+        } else {
+          sugDiv.style.display = 'none';
+          doStockQuery();
+        }
+      } else if (e.key === 'Escape') {
+        sugDiv.style.display = 'none';
+      }
+    }
+
+    function highlightSuggestion() {
+      const items = document.querySelectorAll('.search-suggest-item');
+      items.forEach((el, i) => {
+        el.style.background = i === _searchIdx ? 'var(--bg)' : 'transparent';
+      });
+    }
+
+    // 点击页面其他区域关闭补全列表
+    document.addEventListener('click', (e) => {
+      if (!document.getElementById('stock-query-wrap').contains(e.target)) {
+        document.getElementById('stock-query-suggestions').style.display = 'none';
+      }
+    });
 
     // ─── 股票查询功能 ───
     
