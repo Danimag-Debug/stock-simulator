@@ -165,6 +165,7 @@ def init_db():
         ("market_regime", "TEXT"),
         ("risk_tags", "TEXT"),
         ("opportunity_tags", "TEXT"),
+        ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
     ]
     cursor.execute("PRAGMA table_info(suggestions)")
     existing_cols = {row[1] for row in cursor.fetchall()}
@@ -176,6 +177,10 @@ def init_db():
                 print(f"[数据库] 已为 suggestions 表添加 {col_name} 列")
             except Exception as e:
                 print(f"[数据库] 添加 {col_name} 列失败: {e}")
+    
+    # 更新 existing_cols（可能新增了列）
+    cursor.execute("PRAGMA table_info(suggestions)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
 
     # 自动迁移：为 accounts 表添加 set_initial_cash 列
     try:
@@ -200,12 +205,29 @@ def init_db():
     )
     """)
 
-    # 创建索引
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON accounts(user_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_holdings_user ON holdings(user_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_user ON trade_logs(user_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_time ON suggestions(updated_at)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id)")
+    # 创建索引（带容错）
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON accounts(user_id)")
+    except Exception as e:
+        print(f"[数据库] 创建 accounts 索引失败: {e}")
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_holdings_user ON holdings(user_id)")
+    except Exception as e:
+        print(f"[数据库] 创建 holdings 索引失败: {e}")
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_user ON trade_logs(user_id)")
+    except Exception as e:
+        print(f"[数据库] 创建 trade_logs 索引失败: {e}")
+    try:
+        # 只有 updated_at 列存在时才创建索引
+        if "updated_at" in existing_cols:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_time ON suggestions(updated_at)")
+    except Exception as e:
+        print(f"[数据库] 创建 suggestions 索引失败: {e}")
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id)")
+    except Exception as e:
+        print(f"[数据库] 创建 watchlist 索引失败: {e}")
     
     conn.commit()
     conn.close()
@@ -639,10 +661,14 @@ def load_suggestions() -> List[Dict]:
     conn = get_db()
     cursor = conn.cursor()
     
+    # 检查是否有 updated_at 列
+    cols = _get_suggestions_columns(conn)
+    order_clause = "ORDER BY updated_at DESC" if "updated_at" in cols else ""
+    
     # 获取最新的 9 条推荐
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT * FROM suggestions 
-        ORDER BY updated_at DESC 
+        {order_clause}
         LIMIT 9
     """)
     rows = cursor.fetchall()
@@ -667,12 +693,18 @@ def load_suggestions() -> List[Dict]:
 
 def get_suggestions_updated_at() -> Optional[str]:
     """获取推荐最后更新时间"""
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT updated_at FROM suggestions ORDER BY updated_at DESC LIMIT 1")
-    row = cursor.fetchone()
-    conn.close()
-    return row["updated_at"] if row else None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cols = _get_suggestions_columns(conn)
+        if "updated_at" not in cols:
+            return None
+        cursor.execute("SELECT updated_at FROM suggestions ORDER BY updated_at DESC LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        return row["updated_at"] if row else None
+    except Exception:
+        return None
 
 # 辅助函数
 def dict_rows(rows):
