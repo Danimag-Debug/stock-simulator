@@ -1374,14 +1374,49 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
                 return {"suggestions": [], "skip_reason": "大盘暴跌", "skip_detail": "当前大盘处于暴跌环境，暂停推荐以规避风险"}
         except Exception as e:
             print(f"[WARN] 大盘环境判断失败: {e}")
+    
+    # ── 0.5. 评分门槛自适应校准 ──
+    # 问题：Tushare历史K线无权限时，技术面只能用简化评分（天花板约26分），
+    # 导致总分上限约 26+17+22=65 分，而"弱势"门槛68分 → 永远0结果。
+    # 
+    # 解决方案：检测实际评分能力，对门槛进行向下校准，但保持相对严格性。
+    # 
+    # 评分能力等级：
+    #   完整（Tushare历史K线）：技术满分40，总分上限100  → 门槛不变
+    #   简化（仅实时行情）    ：技术满分约26，总分上限约80 → 门槛 × 0.80
+    if not TUSHARE_AVAILABLE:
+        # 无 Tushare：全靠东方财富/模拟数据，使用简化评分
+        calibrated_threshold = int(score_threshold * 0.78)
+        print(f"[门槛校准] 无 Tushare，简化评分模式：{score_threshold} → {calibrated_threshold}")
+        score_threshold = calibrated_threshold
+    else:
+        # 有 Tushare 实时行情，但历史K线可能无权限
+        # 通过检测历史API权限来判断是否能用完整技术分析
+        _hist_available = False
+        try:
+            pro = ts.pro_api()
+            # 用茅台做一次快速测试（最常见的股票，如果这个都失败，说明历史K线无权限）
+            import datetime as _dt
+            _test_end = _dt.datetime.now().strftime('%Y%m%d')
+            _test_start = (_dt.datetime.now() - _dt.timedelta(days=10)).strftime('%Y%m%d')
+            _test_df = pro.daily(ts_code='600519.SH', start_date=_test_start, end_date=_test_end)
+            _hist_available = _test_df is not None and len(_test_df) > 0
+        except Exception as _e:
+            _hist_available = False
+            print(f"[门槛校准] 历史K线权限检测失败: {_e}")
+        
+        if not _hist_available:
+            # 有实时行情但无历史K线：技术面使用简化评分（天花板约26分）
+            calibrated_threshold = int(score_threshold * 0.80)
+            print(f"[门槛校准] 无历史K线权限，简化评分模式：{score_threshold} → {calibrated_threshold}")
+            score_threshold = calibrated_threshold
+        else:
+            print(f"[门槛校准] 历史K线可用，使用完整评分，门槛维持 {score_threshold} 分")
 
     # ── 1. 获取实时行情（自动降级：Tushare → 东方财富 → 模拟数据）──
-    data_source = "Tushare"
+    data_source = "Tushare实时行情" if TUSHARE_AVAILABLE else "东方财富/模拟数据"
     try:
         stock_list = get_stock_list()
-        # 检测实际使用的数据源
-        if not TUSHARE_AVAILABLE:
-            data_source = "模拟数据"
     except Exception as e:
         # 即使所有数据源都失败（理论上不应该发生），也尝试最终降级
         print(f"[WARN] 所有行情数据源失败: {e}，使用模拟数据")
