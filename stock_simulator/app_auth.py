@@ -558,14 +558,17 @@ def buy(current_user_id):
     if not data or 'code' not in data or 'name' not in data or 'shares' not in data or 'price' not in data:
         return jsonify({"success": False, "message": "参数不全"}), 400
     
-    result = execute_buy(
-        user_id=current_user_id,
-        code=data["code"],
-        name=data["name"],
-        shares=int(data["shares"]),
-        price=float(data["price"])
-    )
-    return jsonify(result)
+    try:
+        result = execute_buy(
+            user_id=current_user_id,
+            code=data["code"],
+            name=data["name"],
+            shares=int(data["shares"]),
+            price=float(data["price"])
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"买入异常：{str(e)}"}), 500
 
 @app.route("/api/trade/sell", methods=["POST"])
 @token_required
@@ -575,13 +578,16 @@ def sell(current_user_id):
     if not data or 'code' not in data or 'shares' not in data or 'price' not in data:
         return jsonify({"success": False, "message": "参数不全"}), 400
     
-    result = execute_sell(
-        user_id=current_user_id,
-        code=data["code"],
-        shares=int(data["shares"]),
-        price=float(data["price"])
-    )
-    return jsonify(result)
+    try:
+        result = execute_sell(
+            user_id=current_user_id,
+            code=data["code"],
+            shares=int(data["shares"]),
+            price=float(data["price"])
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"卖出异常：{str(e)}"}), 500
 
 @app.route("/api/logs", methods=["GET"])
 @token_required

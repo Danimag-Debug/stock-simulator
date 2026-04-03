@@ -1800,7 +1800,17 @@
           method: 'POST',
           body: JSON.stringify({ code, name, shares, price })
         })
-        .then(r => r.json())
+        .then(r => {
+          if (!r.ok) {
+            return r.json().then(data => {
+              throw new Error(data.message || `服务器错误(${r.status})`);
+            }).catch(err => {
+              if (err.message && err.message.includes('服务器错误')) throw err;
+              throw new Error(`服务器错误(${r.status})，请稍后重试`);
+            });
+          }
+          return r.json();
+        })
         .then(data => {
           toast(data.message, data.success ? 'success' : 'error');
           if (data.success) {
@@ -1813,8 +1823,8 @@
             modal.querySelector('#buy-confirm-btn').textContent = '确认买入';
           }
         })
-        .catch(() => {
-          toast('买入失败', 'error');
+        .catch(err => {
+          toast('❌ 买入失败：' + (err.message || '网络错误'), 'error', 6000);
           modal.querySelector('#buy-confirm-btn').disabled = false;
           modal.querySelector('#buy-confirm-btn').textContent = '确认买入';
         });
@@ -1846,7 +1856,17 @@
             method: 'POST',
             body: JSON.stringify({ code, shares, price })
           })
-          .then(r => r.json())
+          .then(r => {
+            if (!r.ok) {
+              return r.json().then(data => {
+                throw new Error(data.message || `服务器错误(${r.status})`);
+              }).catch(err => {
+                if (err.message && err.message.includes('服务器错误')) throw err;
+                throw new Error(`服务器错误(${r.status})，请稍后重试`);
+              });
+            }
+            return r.json();
+          })
           .then(data => {
             toast(data.message, data.success ? 'success' : 'error');
             if (data.success) {
@@ -1854,7 +1874,7 @@
               loadLogs();
             }
           })
-          .catch(() => toast('卖出失败', 'error'));
+          .catch(err => toast('❌ 卖出失败：' + (err.message || '网络错误'), 'error', 6000));
         });
     }
 
