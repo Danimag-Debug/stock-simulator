@@ -468,8 +468,8 @@ def _get_stock_list_eastmoney() -> List[Dict]:
     }
     
     all_items = []
-    # 按成交额排序，获取前2000只热门股票
-    for page in range(1, 5):
+    # 按成交额排序，获取前5000只股票（覆盖更多中小盘）
+    for page in range(1, 11):
         url = (
             f"https://push2.eastmoney.com/api/qt/clist/get?"
             f"pn={page}&pz=500&po=1&np=1&fltt=2&invt=2&fid=f6"
@@ -1498,15 +1498,30 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
         return {"suggestions": [], "skip_reason": "无满足条件的股票", 
                 "skip_detail": f"评分门槛 {score_threshold} 分，当前无股票达标，旧推荐保持不变"}
 
-    # ── 按评分严格排序（高分优先，同分之间小随机保证多样性）──
+    # ── 推荐轮换机制：获取上次已推荐股票，给重复推荐降权 ──
+    recently_recommended = set()
+    try:
+        old_suggestions = database.load_suggestions()
+        recently_recommended = {s["stock_code"] for s in old_suggestions}
+        if recently_recommended:
+            print(f"[轮换] 上次推荐了 {len(recently_recommended)} 只股票，将对重复股票降权")
+    except Exception as _e:
+        print(f"[WARN] 无法获取历史推荐: {_e}")
+
+    # ── 按评分排序（高分优先 + 随机扰动 + 轮换惩罚）──
+    # 随机扰动增大到 ±5 分，让评分相近的股票都有机会出现
+    # 已推荐过的股票额外惩罚 8 分，确保轮换多样性
     for r in results:
-        r["_sort_key"] = r["score"] + random.uniform(0, 1.5)
+        repeat_penalty = 8.0 if r["code"] in recently_recommended else 0.0
+        r["_sort_key"] = r["score"] + random.uniform(0, 5.0) - repeat_penalty
     results.sort(key=lambda x: x["_sort_key"], reverse=True)
     top = results[:top_n]
     for r in top:
         r.pop("_sort_key", None)
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 扫描完成，返回前 {len(top)} 只推荐")
+    repeat_count = sum(1 for r in top if r["code"] in recently_recommended)
+    new_count = len(top) - repeat_count
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 扫描完成，返回前 {len(top)} 只推荐（其中新面孔 {new_count} 只，重复 {repeat_count} 只）")
 
     # ── 构建推荐列表 ──
     suggestions = []
