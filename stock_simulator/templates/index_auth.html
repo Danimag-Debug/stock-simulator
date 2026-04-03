@@ -2276,6 +2276,10 @@
                         summaryMsg += ' ⚠️ 当前使用模拟数据，设置 TUSHARE_TOKEN 可获取真实行情';
                       }
                       toast(summaryMsg, 'success', 6000);
+                      // 暴跌环境额外风险提示
+                      if (statusData.regime_warning) {
+                        setTimeout(() => toast('🛡️ ' + statusData.regime_warning, 'warning', 10000), 1500);
+                      }
                     } else {
                       toast('扫描结束（耗时 ' + elapsedSec + '秒），推荐未变化', 'info', 5000);
                     }

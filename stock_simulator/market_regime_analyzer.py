@@ -435,18 +435,18 @@ def _calculate_regime() -> Dict:
         description = f"上证{last_close:.0f}点，均线偏空，量能不足，谨慎参与"
     else:
         regime = "暴跌"
-        position_limit = 0.1
-        score_threshold = 75
-        advice = "大盘暴跌，停止推荐新股票，建议空仓观望"
-        description = f"上证{last_close:.0f}点大幅下跌，系统性风险高，建议观望等待企稳"
+        position_limit = 0.15
+        score_threshold = 72
+        advice = "大盘暴跌风险较高，仅推荐极少量逆势抗跌股，严格控制仓位在15%以内"
+        description = f"上证{last_close:.0f}点大幅下跌，系统性风险高，极度谨慎操作"
     
     # 暴跌日特殊处理：单日跌超2%直接判为暴跌
     if sh_change_pct <= -2.0:
         regime = "暴跌"
-        position_limit = 0.1
-        score_threshold = 75
-        advice = "今日大盘暴跌，停止买入，检查持仓止损"
-        description = f"上证今日跌{abs(sh_change_pct):.1f}%，系统性风险释放中，不要抄底"
+        position_limit = 0.15
+        score_threshold = 72
+        advice = "今日大盘暴跌，仅推荐逆势抗跌的极少数强势股，仓位控制在15%以内"
+        description = f"上证今日跌{abs(sh_change_pct):.1f}%，系统性风险释放中，极度谨慎"
     
     return {
         "regime": regime,

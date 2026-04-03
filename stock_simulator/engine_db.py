@@ -24,11 +24,11 @@ v5.0 重大升级（专业操盘手视角）：
 总分: 100分
 
 选股流程:
-1. 大盘环境判断 → 暴跌日停止推荐
-2. 全市场筛选 → 成交额前500只
+1. 大盘环境判断 → 暴跌日收紧条件（不停止推荐）
+2. 全市场筛选 → 成交额前5000只
 3. 多维度评分 → 动态评分门槛(大盘弱时提高)
 4. 行业分散度控制 → 同行业最多2只
-5. 仓位限制 → 受大盘环境约束
+5. 仓位限制 → 受大盘环境约束（暴跌时上限15%）
 """
 
 import json
@@ -1367,11 +1367,9 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
             score_threshold = regime_info.get("score_threshold", 50)
             print(f"[大盘环境] {regime_info['regime']} | 仓位上限{position_limit*100:.0f}% | 评分门槛≥{score_threshold}")
             
-            # 暴跌日：停止推荐
+            # 暴跌日：不停止推荐，但大幅收紧条件 + 标记风险提示
             if regime_info["regime"] == "暴跌":
-                print("[大盘环境] 当前为暴跌环境，停止推荐新股票！")
-                database.save_suggestions([])  # 清空旧推荐
-                return {"suggestions": [], "skip_reason": "大盘暴跌", "skip_detail": "当前大盘处于暴跌环境，暂停推荐以规避风险"}
+                print(f"[大盘环境] ⚠️ 当前为暴跌环境，谨慎推荐！仓位上限{position_limit*100:.0f}%，门槛≥{score_threshold}")
         except Exception as e:
             print(f"[WARN] 大盘环境判断失败: {e}")
     
@@ -1587,9 +1585,15 @@ def run_stock_scan(top_n: int = 9) -> List[Dict]:
     if data_source == "模拟数据":
         source_tag = "（模拟数据）"
     
+    # 附加大盘环境信息（用于前端风险提示）
+    regime_tag = ""
+    if regime_info and regime_info.get("regime") == "暴跌":
+        regime_tag = "⚠️ 大盘暴跌环境，以下为逆势抗跌股，建议仓位控制在15%以内，严格止损"
+    
     return {"suggestions": suggestions, "skip_reason": None, 
             "summary": f"扫描完成，共推荐 {len(suggestions)} 只股票{source_tag}",
-            "data_source": data_source}
+            "data_source": data_source,
+            "regime_warning": regime_tag}
 
 def load_suggestions() -> Dict:
     """加载推荐列表，并用实时行情刷新当前价格"""
