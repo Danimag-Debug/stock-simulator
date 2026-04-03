@@ -182,14 +182,72 @@ def init_db():
     cursor.execute("PRAGMA table_info(suggestions)")
     existing_cols = {row[1] for row in cursor.fetchall()}
 
-    # 自动迁移：为 accounts 表添加 set_initial_cash 列
-    try:
-        cursor.execute("ALTER TABLE accounts ADD COLUMN set_initial_cash REAL DEFAULT 150000.0")
-        # 用现有 initial_cash 填充旧数据
-        cursor.execute("UPDATE accounts SET set_initial_cash = initial_cash WHERE set_initial_cash IS NULL")
-        print("[数据库] 已为 accounts 表添加 set_initial_cash 列")
-    except Exception:
-        pass  # 列已存在，忽略
+    # 自动迁移：为 trade_logs 表添加缺失列
+    cursor.execute("PRAGMA table_info(trade_logs)")
+    trade_logs_cols = {row[1] for row in cursor.fetchall()}
+    trade_logs_new_cols = [
+        ("profit_pct", "REAL"),
+    ]
+    for col_name, col_type in trade_logs_new_cols:
+        if col_name not in trade_logs_cols:
+            try:
+                cursor.execute(f"ALTER TABLE trade_logs ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+                print(f"[数据库] 已为 trade_logs 表添加 {col_name} 列")
+            except Exception as e:
+                print(f"[数据库] 添加 {col_name} 列失败: {e}")
+
+    # 自动迁移：为 holdings 表添加缺失列
+    cursor.execute("PRAGMA table_info(holdings)")
+    holdings_cols = {row[1] for row in cursor.fetchall()}
+    holdings_new_cols = [
+        ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),  # 旧表可能缺少 id
+    ]
+    # 注意: id 列的迁移较特殊，SQLite 不支持 ALTER TABLE ADD PRIMARY KEY
+    # 如果缺少 created_at 或 updated_at，可以补加
+    # 注意: SQLite 不支持 ALTER TABLE ADD 带 CURRENT_TIMESTAMP 默认值，改用 TEXT
+    for col_name, col_type in [("created_at", "TEXT"),
+                                ("updated_at", "TEXT")]:
+        if col_name not in holdings_cols:
+            try:
+                cursor.execute(f"ALTER TABLE holdings ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+                print(f"[数据库] 已为 holdings 表添加 {col_name} 列")
+            except Exception as e:
+                print(f"[数据库] 添加 {col_name} 列失败: {e}")
+
+    # 自动迁移：为 accounts 表添加缺失列
+    cursor.execute("PRAGMA table_info(accounts)")
+    accounts_cols = {row[1] for row in cursor.fetchall()}
+    accounts_new_cols = [
+        ("total_profit", "REAL DEFAULT 0.0"),
+        ("set_initial_cash", "REAL DEFAULT 150000.0"),
+        ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
+        ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+    ]
+    for col_name, col_type in accounts_new_cols:
+        if col_name not in accounts_cols:
+            try:
+                # SQLite 不支持 ALTER TABLE ADD 带 CURRENT_TIMESTAMP 默认值
+                if "CURRENT_TIMESTAMP" in str(col_type):
+                    col_type = col_type.replace("TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TEXT")
+                cursor.execute(f"ALTER TABLE accounts ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+                print(f"[数据库] 已为 accounts 表添加 {col_name} 列")
+            except Exception as e:
+                # id 列可能因 INTEGER PRIMARY KEY 冲突，忽略
+                if col_name == "id":
+                    pass
+                else:
+                    print(f"[数据库] 添加 {col_name} 列失败: {e}")
+    # 用现有 initial_cash 填充旧数据
+    if "set_initial_cash" in accounts_cols or True:
+        try:
+            cursor.execute("UPDATE accounts SET set_initial_cash = initial_cash WHERE set_initial_cash IS NULL")
+            cursor.execute("UPDATE accounts SET total_profit = 0 WHERE total_profit IS NULL")
+            conn.commit()
+        except Exception:
+            pass
     
     # 用户收藏表（每用户独立）
     cursor.execute("""
@@ -326,7 +384,13 @@ def get_account(user_id: int) -> Dict:
     conn.close()
     
     if row:
-        return dict(row)
+        result = dict(row)
+        # 确保关键字段始终存在（兼容旧数据库）
+        result.setdefault("total_profit", 0.0)
+        result.setdefault("set_initial_cash", result.get("initial_cash", 150000.0))
+        result.setdefault("cash", 150000.0)
+        result.setdefault("initial_cash", 150000.0)
+        return result
     
     # 如果账户不存在，创建新账户（使用15万元初始资金）
     conn = get_db()
